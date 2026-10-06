@@ -1,0 +1,28 @@
+/* Driver app screens (builds on mccia.css) */
+.muted { color: var(--muted); font-size: 13px; }
+.tight-stack { gap: 12px; }
+.active-ride { width: 100%; text-align: left; border-color: #bcd6ee; background: var(--brand-soft); color: inherit; }
+.active-ride .row { width: 100%; }
+.call-btn { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 auto; border-radius: 50%; color: #fff; background: var(--accent); }
+.meta-line { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 13px; }
+.meta-line span { display: inline-flex; align-items: center; gap: 5px; }
+.route-stop { display: flex; gap: 12px; align-items: flex-start; }
+.route-stop small { display: block; color: var(--muted); font-size: 12px; }
+.route-stop strong { display: block; font-size: 14px; font-weight: 500; }
+.rdot { display: grid; place-items: center; flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; }
+.rdot.a { color: var(--brand); background: var(--brand-soft); }
+.rdot.b { color: var(--accent); background: var(--accent-soft); }
+.route-line { color: var(--muted); font-size: 14px; }
+.route-line b { color: var(--ink); font-weight: 500; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
+.seg button { min-height: 42px; border: 1.5px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); font-weight: 600; }
+.seg button.on { border-color: var(--brand); color: var(--brand); background: var(--brand-soft); }
+.pin-input { text-align: center; letter-spacing: .5em; font: 700 22px var(--font-display); }
+.mini-map, .trip-map { position: relative; overflow: hidden; border-radius: var(--radius); background: #dfe7ee; }
+.mini-map { height: 150px; }
+.trip-map { height: 260px; border: 1px solid var(--line); }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.facts small { display: block; color: var(--muted); font-size: 12px; }
+.facts strong { font-family: var(--font-display); font-size: 22px; }
+.tab-icon { position: relative; display: inline-grid; }
+.tab-icon i { position: absolute; top: -6px; right: -10px; min-width: 16px; height: 16px; display: grid; place-items: center; padding: 0 4px; border-radius: 99px; color: #fff; background: var(--accent); font: 600 10px var(--font-body); font-style: normal; }
