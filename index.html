@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCCIA Socials</title>
+    <!-- MCCIA logo favicon -->
+    <link rel="icon" href="/mccia-logo.png">
+    <!-- PWA: installable app metadata -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#003F8A">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="MCCIA Socials">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800;900&family=Outfit:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script>
+      // MCCIA Applied AI Studio design tokens - extends the Tailwind CDN's
+      // default theme rather than replacing it, so all existing utility
+      // classes (blue-600, slate-100, etc.) keep working during migration.
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                DEFAULT: '#003F8A',
+                50: 'rgba(0,63,138,0.05)',
+                100: 'rgba(0,63,138,0.08)',
+                150: 'rgba(0,63,138,0.12)',
+                200: 'rgba(0,63,138,0.15)',
+                300: 'rgba(0,63,138,0.25)'
+              },
+              secondary: '#0056B3',
+              'accent-green': '#10B981',
+              'accent-green-text': '#059669',
+              'accent-purple': '#8B5CF6',
+              danger: '#EF4444',
+              ink: '#0F172A',
+              muted: '#475569',
+              subtle: '#64748B'
+            },
+            fontFamily: {
+              heading: ['"Bricolage Grotesque"', 'Outfit', 'sans-serif'],
+              body: ['Outfit', 'Inter', 'system-ui', 'sans-serif']
+            },
+            borderRadius: {
+              btn: '10px',
+              field: '12px',
+              card: '20px',
+              chip: '6px',
+              pill: '99px'
+            },
+            boxShadow: {
+              card: '0 15px 40px -10px rgba(0,63,138,0.04)',
+              'card-hover': '0 20px 40px rgba(0,63,138,0.08)',
+              btn: '0 4px 15px rgba(0,63,138,0.15)',
+              'btn-hover': '0 8px 25px rgba(0,63,138,0.25)'
+            },
+            backgroundImage: {
+              'primary-gradient': 'linear-gradient(135deg, #003F8A 0%, #0056B3 100%)',
+              'page-gradient': 'linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)'
+            },
+            transitionTimingFunction: {
+              theme: 'cubic-bezier(0.4, 0, 0.2, 1)'
+            }
+          }
+        }
+      };
+    </script>
+    <style>
+        :root {
+          --ease-theme: cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        body { font-family: 'Outfit', 'Inter', system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
+        h1, h2, h3, h4, .font-heading {
+          font-family: 'Bricolage Grotesque', 'Outfit', sans-serif;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+          line-height: 1.15;
+        }
+        h1 { letter-spacing: -0.03em; }
+        /* Bricolage Grotesque's variable font tops out at 800 on Google
+           Fonts - anything requesting 900 (Tailwind's font-black) has no
+           real 900 file to use and gets browser-synthesized "faux bold"
+           instead, which renders visibly blurrier. Cap headings at the
+           real max weight so they always use an actual font file. */
+        h1, h2, h3, h4 { font-weight: 800 !important; }
+
+        .tab-active { border-bottom: 2px solid #003F8A; color: #003F8A; }
+
+        @keyframes slideUp {
+          from { transform: translateY(10px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        .animate-slide-up { animation: slideUp 0.3s var(--ease-theme) forwards; }
+
+        @keyframes fadeInUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-entry {
+          animation: fadeInUp 0.6s var(--ease-theme) both;
+        }
+
+        .card-glass {
+          background: rgba(255,255,255,0.7);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid rgba(226,232,240,0.85);
+          transition: transform 0.3s var(--ease-theme), background 0.3s var(--ease-theme), border-color 0.3s var(--ease-theme), box-shadow 0.3s var(--ease-theme);
+        }
+        .card-glass:hover {
+          background: rgba(255,255,255,0.95);
+          border-color: rgba(0,63,138,0.25);
+          transform: translateY(-5px);
+        }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.001ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.001ms !important;
+            scroll-behavior: auto !important;
+          }
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@19.0.0",
+    "react-dom": "https://esm.sh/react-dom@19.0.0",
+    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+    "@google/genai": "https://esm.sh/@google/genai@1.3.0",
+    "firebase/app": "https://esm.sh/firebase@11.1.0/app",
+    "firebase/firestore": "https://esm.sh/firebase@11.1.0/firestore",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "firebase/": "https://esm.sh/firebase@^12.7.0/"
+  }
+}
+</script>
+</head>
+<body class="bg-page-gradient text-ink overflow-x-hidden">
+    <div id="root"></div>
+    <script type="module" src="index.tsx"></script>
+</body>
+</html>
