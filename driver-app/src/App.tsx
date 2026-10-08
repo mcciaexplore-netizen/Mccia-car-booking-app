@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { AlertCircle, LocateFixed, Check, CarFront, Clock3, History, Hourglass, Inbox, KeyRound, LogOut, MapPin, Navigation, Phone, ShieldCheck, UserRound, UsersRound, WifiOff, X } from 'lucide-react'
 import AuthScreen from './AuthScreen'
 import { useLocationSharing, type Sharing } from './useLocationSharing'
@@ -64,6 +64,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('requests')
   const [navRideId, setNavRideId] = useState<string | null>(null)
 
+  const autoOpened = useRef(new Set<string>())
+
   const sharing = useLocationSharing(rides.some((r) => r.status === 'accepted' || r.status === 'started'))
 
   const signedOut = useCallback(() => { setToken(null); setDriver(null); setRides([]) }, [])
@@ -89,6 +91,13 @@ export default function App() {
     const timer = setInterval(refresh, 2000)
     return () => { clearTimeout(first); clearInterval(timer) }
   }, [driver, refresh])
+
+  // Like Uber: the guidance map opens by itself the first time a trip is accepted or started.
+  useEffect(() => {
+    if (navRideId) return
+    const next = rides.find((r) => (r.status === 'accepted' || r.status === 'started') && !autoOpened.current.has(r.id))
+    if (next) { autoOpened.current.add(next.id); setNavRideId(next.id) }
+  }, [rides, navRideId])
 
   async function accept(r: Ride) {
     setBusy(r.id); setError('')
