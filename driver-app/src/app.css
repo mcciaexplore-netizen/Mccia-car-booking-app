@@ -26,3 +26,38 @@
 .facts strong { font-family: var(--font-display); font-size: 22px; }
 .tab-icon { position: relative; display: inline-grid; }
 .tab-icon i { position: absolute; top: -6px; right: -10px; min-width: 16px; height: 16px; display: grid; place-items: center; padding: 0 4px; border-radius: 99px; color: #fff; background: var(--accent); font: 600 10px var(--font-body); font-style: normal; }
+.live-card { gap: 8px; border-color: #d6e3ef; }
+.live-card.is-moving { border-color: #bfe3c9; background: #f4fbf6; }
+.live-dot { width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%; background: #9aa7b3; }
+.live-card.is-moving .live-dot { background: var(--accent); animation: live-pulse 1.6s ease-out infinite; }
+@keyframes live-pulse { 0% { box-shadow: 0 0 0 0 #2fa84f66; } 100% { box-shadow: 0 0 0 12px #2fa84f00; } }
+
+/* Full-screen navigation (Uber-style) */
+.nav-screen { position: fixed; inset: 0; z-index: 100; max-width: 460px; margin: 0 auto; overflow: hidden; background: #dfe7ee; }
+.nav-map { position: absolute; inset: 0; z-index: 0; isolation: isolate; }
+.nav-top { position: absolute; top: 0; left: 0; right: 0; z-index: 5; display: flex; align-items: flex-start; gap: 10px; padding: calc(12px + env(safe-area-inset-top)) 12px 0; pointer-events: none; }
+.nav-top > * { pointer-events: auto; }
+.nav-round { flex: 0 0 auto; display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--surface); color: var(--navy); box-shadow: 0 2px 10px #26315040; }
+.nav-banner { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; min-height: 76px; padding: 10px 16px; border-radius: 16px; color: #fff; background: var(--navy); box-shadow: 0 6px 18px #26315055; }
+.nav-arrow { display: grid; place-items: center; flex: 0 0 auto; width: 48px; height: 48px; border-radius: 12px; background: #ffffff1f; }
+.nav-arrow.dim { color: #cfe0f0; }
+.nav-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+.nav-text strong { font: 700 26px var(--font-display); }
+.nav-text span { overflow: hidden; color: #d7e4f1; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.nav-spin { animation: loc-rot .9s linear infinite; }
+.nav-then { position: absolute; z-index: 5; top: calc(100px + env(safe-area-inset-top)); left: 66px; right: 66px; padding: 6px 12px; border-radius: 0 0 12px 12px; background: #1b2536; color: #cfe0f0; font-size: 13px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-then b { color: #fff; font-weight: 600; }
+.nav-speed { position: absolute; z-index: 5; left: 14px; bottom: calc(var(--sheet-h, 250px) + 14px); display: flex; flex-direction: column; align-items: center; justify-content: center; width: 58px; height: 58px; border-radius: 50%; border: 3px solid var(--surface); background: var(--surface); box-shadow: 0 2px 10px #26315040; line-height: 1; }
+.nav-speed strong { color: var(--navy); font: 700 20px var(--font-display); }
+.nav-speed small { color: var(--muted); font-size: 10px; }
+.nav-recentre { position: absolute; z-index: 5; right: 14px; bottom: calc(var(--sheet-h, 250px) + 14px); display: inline-flex; align-items: center; gap: 6px; padding: 10px 14px; border: 0; border-radius: 99px; background: var(--surface); color: var(--brand); font-weight: 600; box-shadow: 0 2px 10px #26315040; }
+.nav-sheet { position: absolute; z-index: 6; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; gap: 14px; padding: 18px 16px calc(16px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--surface); box-shadow: 0 -6px 24px #2631504d; }
+.nav-eta { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nav-eta-main { display: flex; flex-direction: column; line-height: 1.15; }
+.nav-eta-main strong { color: var(--accent); font: 700 28px var(--font-display); }
+.nav-eta-main small { color: var(--muted); font-size: 14px; }
+.nav-confirm { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.nav-car-wrap { overflow: visible; }
+.nav-car { position: absolute; left: -22px; top: -22px; display: grid; place-items: center; width: 44px; height: 44px; border: 3px solid #fff; border-radius: 50%; background: var(--brand); box-shadow: 0 2px 10px #0000005c; transition: transform .6s linear; }
+.nav-car svg { overflow: visible; }
+@media (max-width: 380px) { .nav-text strong { font-size: 22px; } .nav-banner { padding: 8px 12px; } }

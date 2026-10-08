@@ -4,9 +4,10 @@ import { NextResponse } from 'next/server'
 import { checkPw, hashPw, issueToken, newSalt, normEmail, normPhone, phoneKey, readToken } from '@/lib/auth'
 import { db, flush, missingDatabase, save, sync, type Account, type Ride } from '@/lib/db'
 import {
-  ARRIVAL_OPTIONS, CARS, LIVE, deliverOtp, forDriver, forRider, maskEmail, minsFree, newOtp, overview,
-  geocode, phoneOf, roster, schedule, tripMinutes, validCoords,
+  ALLOC_GRACE_MIN, ARRIVAL_OPTIONS, CARS, LIVE, slotLengthMin, windowConflict, deliverOtp, forDriver, forRider, maskEmail, minsFree, newOtp, overview,
+  geocode, liveOf, phoneOf, recordLocation, roster, schedule, tripMinutes, validCoords,
 } from '@/lib/dispatch'
+import { driverReport, registerDriver, removeDriver, setDriverNotes } from '@/lib/drivers'
 import { auth, body, fail, json } from '@/lib/http'
 
 const publicAccount = ({ salt: _s, hash: _h, ...a }: Account) => a
@@ -64,21 +65,9 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
       return json({ token: issueToken(b, acct.id), user: publicAccount(acct) }, 201)
     }
     if (b === 'driver' && c === 'signup' && m === 'POST') {
-      const x = await body(req)
-      const name = String(x.name ?? '').trim().replace(/\s+/g, ' ')
-      const phone = normPhone(x.phone)
-      if (name.length < 2) return fail('Enter your full name.')
-      if (phone.replace(/\D/g, '').length < 7) return fail('Enter a valid phone number.')
-      if (String(x.password ?? '').length < 4) return fail('Password must be at least 4 characters.')
-      const existing = roster().find((dr) => dr.name.toLowerCase() === name.toLowerCase())
-      if (existing && db.drivers.some((acct) => acct.driverId === existing.id)) return fail('A driver with this name already has an account. Sign in instead, or add a middle name or initial.', 409)
-      if (db.drivers.some((acct) => phoneKey(acct.phone) === phoneKey(phone))) return fail('That phone number is already registered.', 409)
-      const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'driver'
-      const driver = existing ?? { id: roster().some((dr) => dr.id === slug) ? `${slug}-${randomBytes(2).toString('hex')}` : slug, name }
-      const salt = newSalt()
-      db.drivers.push({ driverId: driver.id, name: driver.name, phone, salt, hash: hashPw(String(x.password), salt), createdAt: new Date().toISOString() })
-      save.drivers()
-      return json({ token: issueToken('driver', driver.id), user: { id: driver.id, name: driver.name, phone } }, 201)
+      const made = registerDriver(await body(req))
+      if (!made.ok) return fail(made.error, made.status)
+      return json({ token: issueToken('driver', made.value.id), user: made.value }, 201)
     }
     if (b === 'driver' && c === 'signin' && m === 'POST') {
       const x = await body(req)
@@ -93,7 +82,7 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
   /* ----- Driver ----- */
   if (a === 'driver') {
     const driverId = auth(req, 'driver')
-    if (!driverId) return fail('Please sign in again.', 401)
+    if (!driverId || !roster().some((d) => d.id === driverId)) return fail('Please sign in again.', 401)
     if (b === 'rides' && !c && m === 'GET') {
       const s = schedule()
       return json(db.rides.filter((r) => r.driverId === driverId).map((r) => forDriver(r, s)).reverse())
@@ -117,7 +106,9 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
         if (ride.status !== 'requested') return fail(`Ride is ${ride.status}`, 409)
         const s = schedule()
         const sl = s.slots[ride.id]
-        if (!sl?.ready) return fail(`Not yet: ${sl.blockedBy === 'driver' ? 'you have' : `the ${ride.vehicle} has`} ${sl.position} ride${sl.position > 1 ? 's' : ''} ahead. Slot starts in about ${sl.waitMin} min.`, 409)
+        if (!sl?.ready) return fail(sl.blockedBy === 'slot'
+          ? `This ride is scheduled for ${new Date(sl.startAt).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}. You can accept it ${ALLOC_GRACE_MIN} minutes before.`
+          : `Not yet: ${sl.blockedBy === 'driver' ? 'you have' : `the ${ride.vehicle} has`} ${sl.position} ride${sl.position > 1 ? 's' : ''} ahead. Slot starts in about ${sl.waitMin} min.`, 409)
         const x = await body(req)
         ride.status = 'accepted'
         ride.arrivalMin = ARRIVAL_OPTIONS.includes(Number(x.arrivalMin)) ? Number(x.arrivalMin) : 10
@@ -126,6 +117,14 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
         return json(forDriver(ride))
       }
     }
+    // The driver phone reports its GPS position while a ride is active.
+    if (b === 'location' && m === 'POST') {
+      const x = await body(req)
+      const lat = Number(x.lat), lon = Number(x.lon)
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) return fail('Invalid position')
+      return json({ ok: true, live: recordLocation(driverId, { lat, lon, speed: x.speed, heading: x.heading, accuracy: x.accuracy }) })
+    }
+    if (b === 'location' && m === 'GET') return json({ live: liveOf(driverId) })
     if (b === 'verify' && m === 'POST') {
       const x = await body(req)
       const otp = String(x.otp ?? '').trim()
@@ -141,8 +140,34 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
 
   /* ----- Admin ----- */
   if (a === 'admin') {
-    if (!auth(req, 'admin')) return fail('Admin sign-in required.', 401)
-    if (b === 'overview' && m === 'GET') return json(overview())
+    const adminId = auth(req, 'admin')
+    const me = adminId ? db.admins.find((x) => x.id === adminId) : undefined
+    if (!me) return fail('Admin sign-in required.', 401)
+    // Admins change their own password (they must know the current one).
+    if (b === 'password' && m === 'POST') {
+      const x = await body(req)
+      if (!checkPw(String(x.current ?? ''), me.salt, me.hash)) return fail('Current password is incorrect.')
+      const next = String(x.next ?? '')
+      if (next.length < 6) return fail('New password must be at least 6 characters.')
+      if (next === String(x.current)) return fail('Choose a password different from the current one.')
+      me.salt = newSalt(); me.hash = hashPw(next, me.salt)
+      save.admins()
+      return json({ ok: true })
+    }
+    if (b === 'overview' && m === 'GET') return json({ ...overview(), drivers: driverReport() })
+    // Driver activity (CRM): add, annotate and delete drivers.
+    if (b === 'drivers' && !c && m === 'POST') {
+      const made = registerDriver(await body(req), true)
+      return made.ok ? json({ driver: made.value }, 201) : fail(made.error, made.status)
+    }
+    if (b === 'drivers' && c && m === 'PATCH') {
+      const x = await body(req)
+      return setDriverNotes(c, String(x.notes ?? '')) ? json({ ok: true }) : fail('Driver not found or not signed up yet.', 404)
+    }
+    if (b === 'drivers' && c && m === 'DELETE') {
+      const gone = removeDriver(c)
+      return gone.ok ? json({ ok: true, declinedRequests: gone.value.declined }) : fail(gone.error, gone.status)
+    }
     // Admins can book on behalf of a walk-in or phone caller. Addresses are looked up so the car shows on the map.
     if (b === 'rides' && !c && m === 'POST') {
       const x = await body(req)
@@ -163,6 +188,34 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
       db.rides.push(ride)
       save.rides()
       return json({ id: ride.id }, 201)
+    }
+    if (b === 'rides' && c && d === 'allocate' && m === 'POST') {
+      // The rider's driver or car is unavailable: the admin assigns a car, a driver and a time slot.
+      const ride = db.rides.find((r) => r.id === c)
+      if (!ride) return fail('Ride not found', 404)
+      if (ride.status !== 'requested') return fail(`Ride is ${ride.status}. Only waiting requests can be allocated.`, 409)
+      const x = await body(req)
+      const car = CARS.find((cr) => cr.name === x.car)
+      const driver = roster().find((dr) => dr.id === x.driverId)
+      if (!car) return fail('Choose a car.')
+      if (!driver) return fail('Choose a driver.')
+      if (!db.drivers.some((a) => a.driverId === driver.id)) return fail(`${driver.name} has not signed up in the driver app yet.`)
+      const startMs = new Date(String(x.slotStart ?? '')).getTime()
+      if (!Number.isFinite(startMs)) return fail('Choose a time slot.')
+      if (startMs < Date.now() - 10 * 60_000) return fail('That time slot is in the past.')
+      if (startMs > Date.now() + 14 * 24 * 3_600_000) return fail('Choose a slot within the next 14 days.')
+      if (ride.passengers > car.seats) return fail(`${car.name} seats ${car.seats} and this booking has ${ride.passengers} riders.`)
+      const endMs = startMs + slotLengthMin(ride.tripMin) * 60_000
+      const clash = windowConflict(ride.id, car.name, driver.id, startMs, endMs)
+      if (clash) return fail(`${clash.what} is already booked from ${new Date(clash.from).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })} to ${new Date(clash.to).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })} (${clash.ride.riderName}). Pick another slot.`, 409)
+      ride.vehicle = car.name
+      ride.plate = car.plate
+      ride.pickupEtaMin = car.pickupEtaMin
+      ride.driverId = driver.id
+      ride.driverName = driver.name
+      ride.allocation = { allocatedAt: new Date().toISOString(), slotStart: new Date(startMs).toISOString(), slotEnd: new Date(endMs).toISOString() }
+      save.rides()
+      return json({ ok: true, allocation: ride.allocation })
     }
     if (b === 'rides' && c && d && m === 'POST') {
       const ride = db.rides.find((r) => r.id === c)
@@ -241,12 +294,6 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
     const ride = b ? db.rides.find((r) => r.id === b && (r.riderId === me.id || r.riderEmail.toLowerCase() === me.email)) : undefined
     if (!ride) return fail('Ride not found', 404)
     if (!c && m === 'GET') return json(forRider(ride))
-    if (c === 'cancel' && m === 'POST') {
-      if (!['requested', 'accepted'].includes(ride.status)) return fail(`Ride is ${ride.status}`, 409)
-      ride.status = 'cancelled'
-      save.rides()
-      return json(forRider(ride))
-    }
   }
   void url
   return fail('Not found', 404)

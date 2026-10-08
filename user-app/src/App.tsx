@@ -10,14 +10,12 @@ import type { User } from './auth'
 
 type Driver = { id: string; name: string; phone: string; registered: boolean }
 type Car = { name: string; seats: number; plate: string; pickupEtaMin: number }
-type Busy = { cars: Record<string, number>; drivers: Record<string, number> }
 type Tab = 'book' | 'rides' | 'account'
 
 function App({ user, onUser, onLogout }: { user: User; onUser: (u: User) => void; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>('book')
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [cars, setCars] = useState<Car[]>([])
-  const [busy, setBusy] = useState<Busy>({ cars: {}, drivers: {} })
   const [rides, setRides] = useState<PastRide[] | null>(null)
   const [rideId, setRideId] = useState<string | null>(null)
   const [driverId, setDriverId] = useState('')
@@ -40,10 +38,9 @@ function App({ user, onUser, onLogout }: { user: User; onUser: (u: User) => void
     api<Car[]>('/cars').then(setCars).catch((e: ApiError) => setError(e.message))
   }, [])
 
-  // One poll keeps availability, drivers and this rider's rides in sync with the backend.
+  // One poll keeps the driver list and this rider's rides in sync with the backend.
   const refresh = useCallback(async () => {
-    const [b, d, r] = await Promise.allSettled([api<Busy>('/availability'), api<Driver[]>('/drivers'), api<PastRide[]>('/rider/rides')])
-    if (b.status === 'fulfilled') setBusy(b.value)
+    const [d, r] = await Promise.allSettled([api<Driver[]>('/drivers'), api<PastRide[]>('/rider/rides')])
     if (d.status === 'fulfilled') setDrivers(d.value)
     if (r.status === 'fulfilled') setRides(r.value)
   }, [])
@@ -55,7 +52,6 @@ function App({ user, onUser, onLogout }: { user: User; onUser: (u: User) => void
 
   const activeRide = rides?.find(isActive)
   const chosenCar = cars.find((c) => c.name === carName)
-  const selectedDriver = drivers.find((d) => d.id === driverId)
   const maxSeats = chosenCar?.seats ?? 6
   const clock = new Date()
 
@@ -110,7 +106,7 @@ function App({ user, onUser, onLogout }: { user: User; onUser: (u: User) => void
           <div className="m-title"><span className="eyebrow">Hi {user.name.split(' ')[0]}</span><h1>Where to?</h1><p>Book an MCCIA cab in a few taps.</p></div>
 
           {activeRide && <button type="button" className="card active-ride" onClick={() => openRide(activeRide.id)}>
-            <span className="row"><span className="avatar"><CarFront size={18} /></span><span className="grow"><strong>{activeRide.status === 'requested' ? 'Waiting for your driver' : activeRide.status === 'accepted' ? 'Your driver is on the way' : 'Trip in progress'}</strong><small>{activeRide.vehicle} · {activeRide.driverName}</small></span><ArrowRight size={18} /></span>
+            <span className="row"><span className="avatar"><CarFront size={18} /></span><span className="grow"><strong>{activeRide.status === 'requested' ? (activeRide.allocation ? 'Your cab is scheduled' : 'Request received') : activeRide.status === 'accepted' ? 'Your driver is on the way' : 'Trip in progress'}</strong><small>{activeRide.vehicle} · {activeRide.driverName}</small></span><ArrowRight size={18} /></span>
           </button>}
 
           <form className="stack" onSubmit={submitBooking}>
@@ -124,16 +120,13 @@ function App({ user, onUser, onLogout }: { user: User; onUser: (u: User) => void
               <div className="card-head"><h2>Choose a car</h2><span className="eyebrow">{cars.length} types</span></div>
               <div className="car-options">
                 {cars.map((c) => {
-                  const wait = busy.cars[c.name]
                   return <button type="button" key={c.name} className={`car-option ${carName === c.name ? 'selected' : ''}`} onClick={() => { setCarName(c.name); setPassengers((p) => Math.min(p, c.seats)) }} aria-pressed={carName === c.name}>
                     <CarFront size={22} /><strong>{c.name}</strong><small>Up to {c.seats} riders</small>
-                    <span className={`chip ${wait ? 'warn' : 'green'}`}>{wait ? `Free in ~${wait} min` : 'Available'}</span>
                   </button>
                 })}
               </div>
-              <label className="field"><span>Driver</span><span className="input"><UserRound size={16} /><select value={driverId} onChange={(e) => setDriverId(e.target.value)} required><option value="" disabled>Select a driver</option>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}{d.registered ? (busy.drivers[d.id] ? ` · busy ~${busy.drivers[d.id]} min` : ' · available') : ' (not online yet)'}</option>)}</select></span></label>
+              <label className="field"><span>Driver</span><span className="input"><UserRound size={16} /><select value={driverId} onChange={(e) => setDriverId(e.target.value)} required><option value="" disabled>Select a driver</option>{drivers.filter((d) => d.registered).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></span></label>
               {carName === '' && <p className="hint">Pick a car to continue.</p>}
-              {(busy.cars[carName] || busy.drivers[driverId]) ? <div className="alert warn"><Clock3 size={16} /> {busy.cars[carName] ? `The ${carName} is busy` : `${selectedDriver?.name ?? 'Your driver'} is busy`}. You will join the queue, first come first served.</div> : null}
             </div>
 
             <div className="card">

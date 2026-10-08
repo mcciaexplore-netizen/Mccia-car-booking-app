@@ -5,12 +5,12 @@ export type PastRide = {
   id: string; pickup: string; destination: string; pickupCoords: Coords | null; destinationCoords: Coords | null
   driverName: string; vehicle: string; plate: string; tripMin: number; passengers: number
   status: 'requested' | 'accepted' | 'started' | 'cancelled' | 'declined' | 'completed'
-  createdAt: string; slot: { ready: boolean } | null
+  createdAt: string; slot: { ready: boolean } | null; allocation?: { slotStart: string; slotEnd: string } | null
 }
 
 const LABEL: Record<PastRide['status'], [string, string]> = {
   requested: ['Waiting', 'warn'], accepted: ['Driver on the way', ''], started: ['In progress', 'green'],
-  completed: ['Completed', 'green'], cancelled: ['Cancelled', 'grey'], declined: ['Driver was busy', 'red'],
+  completed: ['Completed', 'green'], cancelled: ['Cancelled', 'grey'], declined: ['Driver unavailable', 'red'],
 }
 export const isActive = (r: PastRide) => ['requested', 'accepted', 'started'].includes(r.status)
 

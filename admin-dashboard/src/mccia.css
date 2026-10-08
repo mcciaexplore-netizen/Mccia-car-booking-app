@@ -124,10 +124,27 @@ p { margin: 0; }
 .loc-msg.error { color: var(--danger); }
 .loc-attr { padding: 6px 10px 2px; border-top: 1px solid var(--line); color: #9aa7b3; font-size: 11px; }
 
-/* Maps */
-.leaflet-box { position: absolute; inset: 0; z-index: 0; }
-.mk { display: block; width: 22px; height: 22px; border: 4px solid #fff; background: var(--navy); box-shadow: 0 1px 6px #0006; }
-.mk.pick { border-radius: 50%; background: var(--brand); }
+/* Maps (Google Maps JavaScript API) */
+.gmap-box { position: absolute; inset: 0; z-index: 0; }
+.map-problem { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; background: #e9eef3; color: var(--muted); text-align: center; font-size: 14px; }
+.map-problem strong { color: var(--navy); font-family: var(--font-display); font-size: 16px; }
+.mk { position: absolute; display: block; left: -11px; top: -11px; width: 22px; height: 22px; border: 4px solid #fff; border-radius: 50%; background: var(--navy); box-shadow: 0 1px 6px #0006; }
+.mk.pick { background: var(--brand); }
 .mk.drop { border-radius: 4px; background: var(--accent); }
-.mk.car { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; border: 2px solid #fff; background: var(--navy); }
-.leaflet-control-attribution { font-size: 10px; }
+.mk.car { left: -17px; top: -17px; width: 34px; height: 34px; display: grid; place-items: center; border: 2px solid #fff; background: var(--navy); }
+.car-pin { transition: transform 3s linear; }
+.gm-style-cc, .gmnoprint a { font-size: 10px; }
+.leaflet-zoom-anim .fleet-pin, .leaflet-zoom-anim .car-pin { transition: none; }
+.leaflet-container { font: inherit; }
+.gm-html-marker, .leaflet-marker-icon.fleet-pin, .leaflet-marker-icon.car-pin, .leaflet-marker-icon.gm-dot { overflow: visible; }
+.alert.info { color: var(--brand-dark); background: var(--brand-soft); }
+
+/* My location (GPS) */
+.locate-btn { position: absolute; z-index: 5; left: 10px; bottom: 10px; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--surface); color: var(--muted); box-shadow: 0 2px 10px #26315040; }
+.locate-btn.on { color: var(--brand); }
+.locate-btn.denied, .locate-btn.unavailable { color: var(--danger); }
+.locate-spin { animation: loc-rot .9s linear infinite; }
+.me-pin { overflow: visible; }
+.me-dot { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border: 3px solid #fff; border-radius: 50%; background: #1a73e8; box-shadow: 0 1px 6px #0006; }
+.me-dot i { position: absolute; inset: -3px; border-radius: 50%; background: #1a73e866; animation: me-pulse 2s ease-out infinite; }
+@keyframes me-pulse { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(3.2); opacity: 0; } }

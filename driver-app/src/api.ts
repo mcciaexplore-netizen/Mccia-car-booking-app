@@ -7,7 +7,8 @@ export type Ride = {
   passengers: number; pickupTime: string; vehicle: string; plate: string; driverId: string
   pickupEtaMin: number; tripMin: number; arrivalMin: number | null
   status: 'requested' | 'accepted' | 'started' | 'cancelled' | 'declined' | 'completed'
-  slot: { startAt: string; endAt: string; position: number; waitMin: number; ready: boolean; blockedBy: 'car' | 'driver' | 'both' | null } | null
+  slot: { startAt: string; endAt: string; position: number; waitMin: number; ready: boolean; blockedBy: 'car' | 'driver' | 'both' | 'slot' | null } | null
+  allocation?: { slotStart: string; slotEnd: string }
   createdAt: string; acceptedAt: string | null; startedAt: string | null; completedAt?: string | null
 }
 

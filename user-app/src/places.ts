@@ -1,20 +1,20 @@
-// Place search for the "From" / "To" fields. Provider is picked by which key is set:
+// Place search for the "From" / "To" fields. Provider is picked by which key is set (Geoapify first):
 // - VITE_OLA_MAPS_API_KEY: Ola Maps (India) autocomplete, place details, reverse geocoding
-// - VITE_GOOGLE_MAPS_API_KEY: Google Places (New) + Geocoding
+// - VITE_GOOGLE_PLACES_API_KEY: Google Places (New) + Geocoding
 // - VITE_GEOAPIFY_API_KEY: Geoapify autocomplete (free tier, OpenStreetMap-based)
 // - neither: Photon (https://photon.komoot.io), free and key-less
 export type Coords = { lat: number; lon: number }
 export type Place = { id: string; label: string; detail: string; coords?: Coords; placeId?: string; kind: 'place' | 'address' }
 
 const OLA_KEY = import.meta.env.VITE_OLA_MAPS_API_KEY as string | undefined
-const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined
+const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_PLACES_API_KEY as string | undefined
 const GEOAPIFY_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY as string | undefined
-export const PROVIDER: 'ola' | 'google' | 'geoapify' | 'photon' = OLA_KEY ? 'ola' : GOOGLE_KEY ? 'google' : GEOAPIFY_KEY ? 'geoapify' : 'photon'
+export const PROVIDER: 'ola' | 'google' | 'geoapify' | 'photon' = GEOAPIFY_KEY ? 'geoapify' : OLA_KEY ? 'ola' : GOOGLE_KEY ? 'google' : 'photon'
 export const ATTRIBUTION = { ola: 'Search by Ola Maps', google: 'Powered by Google', geoapify: 'Search by Geoapify · © OpenStreetMap', photon: 'Search by OpenStreetMap · Photon' }[PROVIDER]
 
 const PHOTON = 'https://photon.komoot.io'
-// Austin, TX: the service area. Used to rank nearby results first when we don't know where the rider is.
-export const AUSTIN: Coords = { lat: 30.2672, lon: -97.7431 }
+// Pune: the service area. Used to rank nearby results first when we don't know where the rider is.
+export const AUSTIN: Coords = { lat: 18.5204, lon: 73.8567 }
 
 export const newSessionToken = () => crypto.randomUUID()
 
@@ -129,7 +129,7 @@ function geoToPlace(f: GeoFeature): Place {
 }
 
 async function geoapifySearch(query: string, bias: Coords, signal?: AbortSignal): Promise<Place[]> {
-  const url = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(query)}&bias=proximity:${bias.lon},${bias.lat}&limit=6&lang=en&apiKey=${GEOAPIFY_KEY}`
+  const url = `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(query)}&filter=countrycode:in&bias=proximity:${bias.lon},${bias.lat}&limit=6&lang=en&apiKey=${GEOAPIFY_KEY}`
   const res = await fetch(url, { signal })
   if (!res.ok) throw new Error(`Geoapify ${res.status}`)
   const data: { features: GeoFeature[] } = await res.json()

@@ -53,3 +53,10 @@
 .rdot.a { color: var(--brand); background: var(--brand-soft); }
 .rdot.b { color: var(--accent); background: var(--accent-soft); }
 .trip .m-main { padding-bottom: 28px; }
+.live-line { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; padding: 6px 12px; border-radius: 99px; font-size: 13px; font-weight: 600; }
+.live-line i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.live-line.moving { color: #1f7a3a; background: var(--accent-soft); }
+.live-line.moving i { animation: blink 1.4s ease-in-out infinite; }
+.live-line.stopped { color: var(--danger); background: var(--danger-soft); }
+.live-line.none { color: var(--muted); background: #eef2f6; }
+@keyframes blink { 50% { opacity: .3; } }

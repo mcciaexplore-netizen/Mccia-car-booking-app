@@ -1,8 +1,11 @@
-import { useEffect, useRef } from 'react'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
+import { useEffect, useRef, useState } from 'react'
+import { metresBetween, PUNE } from './geo'
+import LocateButton from './LocateButton'
+import { fetchPath } from './routing'
+import { createMap, type AdMarker, type AdShape, type LL, type MapAdapter } from './mapAdapter'
 
 type Coords = { lat: number; lon: number }
+export type Live = { lat: number; lon: number; speedKmh: number; state: 'moving' | 'stopped' | 'offline'; stoppedForSec: number; ageSec: number }
 export type MapCar = {
   name: string
   plate: string
@@ -17,107 +20,147 @@ export type MapCar = {
     riderName: string
     pickupCoords: Coords | null
     destinationCoords: Coords | null
+    live: Live | null
   } | null
 }
 
 const COLORS = ['#0b63ad', '#2fa84f', '#e0a82e', '#c2569b']
-const PUNE: L.LatLngExpression = [18.5204, 73.8567]
 
-// Point at a fraction of the way along a polyline.
-function along(path: L.LatLng[], t: number): L.LatLng {
+// Point at a fraction of the way along a polyline (used only until the driver's GPS reports in).
+function along(path: LL[], t: number): LL {
   if (path.length < 2) return path[0]
-  const lengths = path.slice(1).map((p, i) => path[i].distanceTo(p))
+  const lengths = path.slice(1).map((p, i) => metresBetween(path[i], p))
   let remaining = lengths.reduce((a, b) => a + b, 0) * Math.min(Math.max(t, 0), 1)
   for (let i = 0; i < lengths.length; i++) {
     if (remaining <= lengths[i] || i === lengths.length - 1) {
       const f = lengths[i] ? Math.min(remaining / lengths[i], 1) : 0
-      return L.latLng(path[i].lat + (path[i + 1].lat - path[i].lat) * f, path[i].lng + (path[i + 1].lng - path[i].lng) * f)
+      return { lat: path[i].lat + (path[i + 1].lat - path[i].lat) * f, lng: path[i].lng + (path[i + 1].lng - path[i].lng) * f }
     }
     remaining -= lengths[i]
   }
   return path[path.length - 1]
 }
 
-const carIcon = (car: MapCar, color: string) => {
-  const busy = car.status === 'busy' && car.trip
-  const label = busy ? `${car.trip!.phase === 'to-pickup' ? 'To pickup' : 'On trip'} · ${car.trip!.etaMin} min` : 'Idle'
-  return L.divIcon({
-    className: 'fleet-pin',
-    iconSize: [0, 0],
-    html: `<div class="fleet-pin-body"><span class="fleet-pin-dot ${busy ? 'is-live' : ''}" style="background:${busy ? color : '#fff'};border-color:${busy ? '#fff' : color}">&#128663;</span><span class="fleet-pin-tag"><b>${car.name}</b>${label}</span></div>`,
-  })
+const mins = (sec: number) => (sec < 60 ? `${Math.max(sec, 1)} s` : `${Math.round(sec / 60)} min`)
+
+type Look = { tone: 'moving' | 'stopped' | 'nosignal' | 'idle' | 'waiting'; label: string }
+function lookOf(car: MapCar): Look {
+  const trip = car.status === 'busy' ? car.trip : null
+  if (!trip) return { tone: 'idle', label: 'Idle at base' }
+  const live = trip.live
+  if (!live) return { tone: 'waiting', label: 'Waiting for driver GPS' }
+  if (live.state === 'moving') return { tone: 'moving', label: `Moving · ${live.speedKmh} km/h` }
+  if (live.state === 'stopped') return { tone: 'stopped', label: `Stopped · ${mins(live.stoppedForSec)}` }
+  return { tone: 'nosignal', label: `No signal · ${mins(live.ageSec)} ago` }
 }
+
+const pinHtml = (name: string) => `<div class="fleet-pin-body"><span class="fleet-pin-dot">&#128663;</span><span class="fleet-pin-tag"><b>${name}</b><i></i></span></div>`
+
+type RouteGroup = { tripId: string; shapes: AdShape[] }
 
 export default function FleetMap({ cars, filter }: { cars: MapCar[]; filter: string }) {
   const box = useRef<HTMLDivElement>(null)
-  const map = useRef<L.Map | null>(null)
-  const layer = useRef<L.LayerGroup | null>(null)
-  const routes = useRef(new Map<string, L.LatLng[]>())
+  const map = useRef<MapAdapter | null>(null)
+  const markers = useRef(new Map<string, AdMarker>())
+  const routeGroups = useRef(new Map<string, RouteGroup>())
+  const routes = useRef(new Map<string, LL[]>())
   const fitted = useRef('')
+  const [ready, setReady] = useState(false)
 
+  // Create the map (Google when the key works, OpenStreetMap otherwise).
   useEffect(() => {
+    let cancelled = false
+    let created: MapAdapter | null = null
+    const markerStore = markers.current
+    const groupStore = routeGroups.current
     if (!box.current) return
-    const m = L.map(box.current, { center: PUNE, zoom: 12, zoomControl: false, attributionControl: true })
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(m)
-    L.control.zoom({ position: 'bottomright' }).addTo(m)
-    layer.current = L.layerGroup().addTo(m)
-    map.current = m
-    return () => { m.remove(); map.current = null }
+    createMap(box.current, { center: PUNE, zoom: 12 }).then((m) => {
+      if (cancelled) { m.destroy(); return }
+      created = m
+      map.current = m
+      setReady(true)
+    })
+    return () => {
+      cancelled = true
+      markerStore.forEach((m) => m.remove()); markerStore.clear()
+      groupStore.forEach((g) => g.shapes.forEach((s) => s.remove())); groupStore.clear()
+      created?.destroy(); map.current = null
+    }
   }, [])
 
   useEffect(() => {
     const m = map.current
-    const group = layer.current
-    if (!m || !group) return
+    if (!ready || !m) return
     let cancelled = false
 
-    async function pathFor(trip: NonNullable<MapCar['trip']>): Promise<L.LatLng[]> {
+    async function pathFor(trip: NonNullable<MapCar['trip']>): Promise<LL[]> {
       const cached = routes.current.get(trip.id)
       if (cached) return cached
       const a = trip.pickupCoords
       const b = trip.destinationCoords
       if (!a || !b) return []
-      let path = [L.latLng(a.lat, a.lon), L.latLng(b.lat, b.lon)]
-      try {
-        const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson`)
-        const json = await res.json()
-        const coords: [number, number][] | undefined = json.routes?.[0]?.geometry?.coordinates
-        if (coords?.length) path = coords.map(([lon, lat]) => L.latLng(lat, lon))
-      } catch { /* straight line fallback */ }
+      const path = await fetchPath({ lat: a.lat, lng: a.lon }, { lat: b.lat, lng: b.lon })
       routes.current.set(trip.id, path)
       return path
     }
 
+    const clearGroup = (g: RouteGroup) => g.shapes.forEach((s) => s.remove())
+
     ;(async () => {
       const shown = cars.map((car, index) => ({ car, index })).filter(({ car }) => filter === 'all' || car.name === filter)
-      const drawn = await Promise.all(shown.map(async ({ car, index }) => {
-        const color = COLORS[index % COLORS.length]
+      const plans = await Promise.all(shown.map(async ({ car, index }) => {
         const trip = car.status === 'busy' ? car.trip : null
         const path = trip ? await pathFor(trip) : []
-        const position = path.length ? along(path, trip!.progress) : L.latLng(car.depot.lat, car.depot.lon)
-        return { car, color, path, position }
+        const live = trip?.live
+        // Real GPS wins; the simulated position along the route is only a placeholder until the driver's phone reports.
+        const position: LL = live ? { lat: live.lat, lng: live.lon } : path.length ? along(path, trip!.progress) : { lat: car.depot.lat, lng: car.depot.lon }
+        return { car, color: COLORS[index % COLORS.length], path, position, look: lookOf(car), trip }
       }))
       if (cancelled) return
-      group.clearLayers()
-      for (const { car, color, path, position } of drawn) {
-        if (path.length) {
-          L.polyline(path, { color: '#fff', weight: 8, opacity: 0.9 }).addTo(group)
-          L.polyline(path, { color, weight: 5, opacity: 0.95 }).addTo(group)
-          L.circleMarker(path[0], { radius: 5, color, weight: 2, fillColor: '#fff', fillOpacity: 1 }).addTo(group)
-          L.circleMarker(path[path.length - 1], { radius: 6, color: '#fff', weight: 2, fillColor: '#d6453d', fillOpacity: 1 }).addTo(group)
+
+      // Remove cars that are filtered out or gone.
+      const keep = new Set(plans.map((p) => p.car.name))
+      for (const [name, marker] of markers.current) if (!keep.has(name)) { marker.remove(); markers.current.delete(name) }
+      for (const [name, group] of routeGroups.current) if (!keep.has(name)) { clearGroup(group); routeGroups.current.delete(name) }
+
+      for (const { car, color, path, position, look, trip } of plans) {
+        // Route lines are redrawn only when the trip changes.
+        const existing = routeGroups.current.get(car.name)
+        if (existing && existing.tripId !== (trip?.id ?? '')) { clearGroup(existing); routeGroups.current.delete(car.name) }
+        if (trip && path.length && !routeGroups.current.has(car.name)) {
+          routeGroups.current.set(car.name, {
+            tripId: trip.id,
+            shapes: [
+              m.addLine(path, { color: '#ffffff', weight: 9, opacity: 0.9 }),
+              m.addLine(path, { color, weight: 5, opacity: 0.95 }),
+              m.addDot(path[0], { radius: 6, fill: '#ffffff', stroke: color, strokeWidth: 3 }),
+              m.addDot(path[path.length - 1], { radius: 7, fill: '#d6453d', stroke: '#ffffff', strokeWidth: 2 }),
+            ],
+          })
         }
-        L.marker(position, { icon: carIcon(car, color), zIndexOffset: 1000 }).addTo(group)
+
+        // One persistent marker per car: it glides to each new GPS fix instead of being recreated.
+        let marker = markers.current.get(car.name)
+        if (!marker) {
+          marker = m.addMarker(position, pinHtml(car.name), 'fleet-pin')
+          markers.current.set(car.name, marker)
+        } else marker.setPosition(position)
+        const el = marker.getElement()
+        const dot = el?.querySelector<HTMLElement>('.fleet-pin-dot')
+        const tag = el?.querySelector<HTMLElement>('.fleet-pin-tag i')
+        if (dot) { dot.dataset.tone = look.tone; dot.style.setProperty('--car', color) }
+        if (tag) tag.textContent = look.label
       }
-      // Re-fit only when the set of visible cars or trips changes, so the view does not jump on every refresh.
-      const signature = `${filter}|${drawn.map((d) => `${d.car.name}:${d.car.trip?.id ?? 'idle'}`).join(',')}`
-      if (signature !== fitted.current && drawn.length) {
+
+      // Re-fit only when the visible cars or trips change, so the view does not jump on every refresh.
+      const signature = `${filter}|${plans.map((p) => `${p.car.name}:${p.trip?.id ?? 'idle'}`).join(',')}`
+      if (signature !== fitted.current && plans.length) {
         fitted.current = signature
-        const bounds = L.latLngBounds(drawn.flatMap((d) => (d.path.length ? d.path : [d.position])))
-        m.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 })
+        m.fitBounds(plans.flatMap((p) => [...p.path, p.position]), 60, 15)
       }
     })()
     return () => { cancelled = true }
-  }, [cars, filter])
+  }, [ready, cars, filter])
 
-  return <div ref={box} className="fleet-leaflet" role="img" aria-label="Live map of fleet vehicles in Pune" />
+  return <><div ref={box} className="gmap-box" role="img" aria-label="Live map of fleet vehicles in Pune" /><LocateButton getMap={() => map.current} /></>
 }
