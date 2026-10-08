@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { AlertCircle, LocateFixed, Check, CarFront, Clock3, History, Hourglass, Inbox, KeyRound, LogOut, MapPin, Navigation, Phone, ShieldCheck, UserRound, UsersRound, WifiOff, X } from 'lucide-react'
+import { AlertCircle, LocateFixed, Check, CarFront, Clock3, History, Hourglass, Inbox, KeyRound, LogOut, MapPin, Navigation, Phone, ShieldCheck, UserRound, UsersRound, WifiOff } from 'lucide-react'
 import AuthScreen from './AuthScreen'
 import { useLocationSharing, type Sharing } from './useLocationSharing'
 import MapView from './MapView'
@@ -124,8 +124,7 @@ export default function App() {
     finally { setBusy(null) }
   }
 
-  async function act(r: Ride, action: 'decline' | 'complete') {
-    if (action === 'decline' && !window.confirm(`Tell ${r.riderName} you are busy and cancel this ride?`)) return
+  async function act(r: Ride, action: 'complete') {
     setBusy(r.id); setError('')
     try {
       await api(`/driver/rides/${r.id}/${action}`, { method: 'POST', body: {} })
@@ -180,7 +179,6 @@ export default function App() {
               {!r.allocation && r.slot && !r.slot.ready && <div className="alert warn"><Hourglass size={16} /><span><b>Queued · #{r.slot.position + 1}.</b> {r.slot.blockedBy === 'driver' ? 'You have' : r.slot.blockedBy === 'car' ? `The ${r.vehicle} has` : `You and the ${r.vehicle} have`} {r.slot.position} ride{r.slot.position > 1 ? 's' : ''} ahead. Slot {clock(r.slot.startAt)} – {clock(r.slot.endAt)}.</span></div>}
               {(!r.slot || r.slot.ready) && <div className="field"><span>I can reach the rider in</span><div className="seg">{ARRIVALS.map((m) => <button type="button" key={m} className={(arrival[r.id] ?? 10) === m ? 'on' : ''} onClick={() => setArrival((a) => ({ ...a, [r.id]: m }))}>{m} min</button>)}</div></div>}
               <button className="btn btn-primary" onClick={() => accept(r)} disabled={busy === r.id || (!!r.slot && !r.slot.ready)}><Check size={16} /> {r.slot && !r.slot.ready ? 'Waiting for your turn' : busy === r.id ? 'Accepting…' : 'Accept'}</button>
-              <button className="btn btn-danger" onClick={() => act(r, 'decline')} disabled={busy === r.id}><X size={15} /> I am busy, cancel this ride</button>
             </article>
           ))}
 
@@ -198,7 +196,6 @@ export default function App() {
                   <span className="input"><input className="pin-input" inputMode="numeric" maxLength={4} pattern="\d{4}" placeholder="• • • •" value={pin[r.id] ?? ''} onChange={(e) => setPin((o) => ({ ...o, [r.id]: e.target.value.replace(/\D/g, '') }))} required aria-label="Rider PIN" /></span>
                   <button className="btn btn-primary" type="submit" disabled={busy === r.id}><ShieldCheck size={16} /> Verify and start trip</button>
                 </form>
-                <button className="btn btn-danger" onClick={() => act(r, 'decline')} disabled={busy === r.id}><X size={15} /> I am busy, cancel this ride</button>
               </article>
             ))}
           </>}
