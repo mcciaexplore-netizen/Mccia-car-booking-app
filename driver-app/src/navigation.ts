@@ -2,7 +2,7 @@
 import { GEOAPIFY_KEY } from './geo'
 import type { LL } from './mapAdapter'
 
-export type Step = { type: string; modifier: string; name: string; location: LL; distance: number; duration: number; exit: number | null; text?: string }
+export type Step = { type: string; modifier: string; name: string; location: LL; distance: number; duration: number; exit: number | null; text?: string; fromIndex?: number }
 export type Route = { path: LL[]; steps: Step[]; distance: number; duration: number }
 
 const RAD = Math.PI / 180
@@ -39,8 +39,10 @@ function geoapifyStep(type: string): { type: string; modifier: string } {
 async function geoapifyRoute(from: LL, to: LL, signal?: AbortSignal): Promise<Route | null> {
   if (!GEOAPIFY_KEY) return null
   try {
-    const url = `https://api.geoapify.com/v1/routing?waypoints=${from.lat},${from.lng}|${to.lat},${to.lng}&mode=drive&details=instruction_details&apiKey=${GEOAPIFY_KEY}`
-    const feature = (await (await fetch(url, { signal })).json()).features?.[0]
+    const base = `https://api.geoapify.com/v1/routing?waypoints=${from.lat},${from.lng}|${to.lat},${to.lng}&mode=drive&details=instruction_details&apiKey=${GEOAPIFY_KEY}`
+    // Ask for traffic-aware timing first; fall back to plain routing if the plan does not allow it.
+    const feature = (await (await fetch(base + '&traffic=approximated', { signal })).json()).features?.[0]
+      ?? (await (await fetch(base, { signal })).json()).features?.[0]
     if (!feature) return null
     const lines: [number, number][][] = feature.geometry.type === 'MultiLineString' ? feature.geometry.coordinates : [feature.geometry.coordinates]
     const path: LL[] = lines.flat().map(([lng, lat]) => ({ lat, lng }))
@@ -54,6 +56,7 @@ async function geoapifyRoute(from: LL, to: LL, signal?: AbortSignal): Promise<Ro
         duration: s.time,
         exit: null,
         text: s.instruction?.text,
+        fromIndex: s.from_index,
       }
     })
     return { path, steps, distance: feature.properties.distance, duration: feature.properties.time }
@@ -143,3 +146,24 @@ export function nearestIndex(pos: LL, path: LL[], from = 0) {
   for (let i = from; i < path.length; i++) { const d = metres(pos, path[i]); if (d < bestD) { bestD = d; best = i } }
   return best
 }
+
+// Traffic along the route, like Uber's red/orange stretches: each step's average speed (distance over its traffic-aware
+// travel time) decides whether that stretch is free, slow or heavy.
+export type Traffic = 'free' | 'slow' | 'heavy'
+export type TrafficSegment = { from: number; to: number; level: Traffic }
+export function trafficSegments(route: Route): TrafficSegment[] {
+  const last = route.path.length - 1
+  const out: TrafficSegment[] = []
+  route.steps.forEach((s, i) => {
+    if (s.fromIndex === undefined) return
+    const to = route.steps[i + 1]?.fromIndex ?? last
+    if (to <= s.fromIndex) return
+    const kmh = s.duration > 0 ? (s.distance / s.duration) * 3.6 : 99
+    const level: Traffic = s.distance < 150 ? 'free' : kmh < 10 ? 'heavy' : kmh < 20 ? 'slow' : 'free'
+    const prev = out[out.length - 1]
+    if (prev && prev.level === level && prev.to === s.fromIndex) prev.to = to
+    else out.push({ from: s.fromIndex, to, level })
+  })
+  return out
+}
+export const TRAFFIC_COLOR: Record<Traffic, string> = { free: '#0b63ad', slow: '#f59e0b', heavy: '#dc2626' }

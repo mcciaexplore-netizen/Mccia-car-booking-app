@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { PUNE } from './geo'
 import { createMap, type AdMarker, type AdShape, type LL, type MapAdapter } from './mapAdapter'
-import { arrowFor, bearing, distanceToRoute, fetchRoute, formatDistance, instruction, metres, nearestIndex, type ArrowKind, type Route } from './navigation'
+import { arrowFor, bearing, distanceToRoute, fetchRoute, formatDistance, instruction, metres, nearestIndex, trafficSegments, TRAFFIC_COLOR, type ArrowKind, type Route } from './navigation'
 import type { Ride } from './api'
 import type { Position } from './useLocationSharing'
 
@@ -41,6 +41,7 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
   const lastHeading = useRef(0)
   const spoken = useRef(new Set<string>())
   const centred = useRef(false)
+  const rotAcc = useRef(0)
 
   const [ready, setReady] = useState(false)
   const [route, setRoute] = useState<Route | null>(null)
@@ -84,7 +85,7 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
       if (cancelled) { m.destroy(); return }
       created = m
       map.current = m
-      m.onDrag(() => setFollowing(false))
+      m.onDrag(() => setFollowing(false)) // dragging the map hands control back: north-up until Re-centre
       setReady(true)
     })
     return () => {
@@ -159,7 +160,12 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
     if (!carMarker.current) carMarker.current = m.addMarker(pos, CAR_HTML, 'nav-car-wrap')
     else carMarker.current.setPosition(pos)
     const car = carMarker.current.getElement()?.querySelector<HTMLElement>('.nav-car')
-    if (car) car.style.transform = `rotate(${heading}deg)`
+    // Heading-up like Uber: while following, the map turns so the road ahead is always up and the car points straight up.
+    const delta = ((heading - rotAcc.current + 540) % 360) - 180
+    if (following) rotAcc.current += delta
+    const turn = following ? rotAcc.current : 0
+    if (box.current) { box.current.style.setProperty('--rot', `${-turn}deg`); box.current.style.setProperty('--unrot', `${turn}deg`) }
+    if (car) car.style.transform = `rotate(${following ? 0 : heading}deg)`
 
     // Draw only the part of the route still ahead.
     if (route) {
@@ -167,10 +173,15 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
       if (drawnFrom.current < 0 || from - drawnFrom.current >= 6) {
         lineShapes.current.forEach((s) => s.remove())
         const ahead = [pos, ...route.path.slice(from)]
-        lineShapes.current = [
-          m.addLine(ahead, { color: '#ffffff', weight: 11, opacity: 0.95 }),
-          m.addLine(ahead, { color: '#0b63ad', weight: 6, opacity: 1 }),
-        ]
+        const shapes = [m.addLine(ahead, { color: '#ffffff', weight: 11, opacity: 0.95 })]
+        // Blue where traffic flows, orange where it is slow, red where it is jammed.
+        const segs = trafficSegments(route).filter((sg) => sg.to > from)
+        if (!segs.length) shapes.push(m.addLine(ahead, { color: TRAFFIC_COLOR.free, weight: 6, opacity: 1 }))
+        segs.forEach((sg, i) => {
+          const pts = route.path.slice(Math.max(sg.from, from), sg.to + 1)
+          shapes.push(m.addLine(i === 0 ? [pos, ...pts] : pts, { color: TRAFFIC_COLOR[sg.level], weight: 6, opacity: 1 }))
+        })
+        lineShapes.current = shapes
         drawnFrom.current = from
       }
     }
@@ -208,6 +219,10 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
     if (pos) map.current?.setView(pos, 17)
   }
 
+  const segsAhead = route ? trafficSegments(route) : []
+  const nearestAheadIdx = route && pos ? nearestIndex(pos, route.path) : 0
+  const worst = segsAhead.filter((sg) => sg.to > nearestAheadIdx && route && metres(route.path[Math.max(sg.from, nearestAheadIdx)], pos ?? route.path[0]) < 3000).reduce<'free' | 'slow' | 'heavy'>((w, sg) => (sg.level === 'heavy' || w === 'heavy' ? 'heavy' : sg.level === 'slow' || w === 'slow' ? 'slow' : 'free'), 'free')
+  const moving = (fix?.speedKmh ?? 0) >= 3
   const Arrow = step ? ICONS[arrowFor(step)] : Navigation
   const nextNext = route?.steps[nextIdx + 1]
   const phone = ride.phone ? ride.phone.replace(/[^+\d]/g, '') : ''
@@ -235,6 +250,8 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
       {!nearTarget && route && nextNext && <div className="nav-then">Then <b>{instruction(nextNext, targetLabel)}</b></div>}
 
       {fix && fix.speedKmh !== null && <div className="nav-speed"><strong>{fix.speedKmh}</strong><small>km/h</small></div>}
+      {fix && <div className={`nav-state ${moving ? 'moving' : 'stopped'}`}>{moving ? 'Moving' : 'Stopped'}</div>}
+      {!nearTarget && route && worst !== 'free' && <div className={`nav-traffic ${worst}`}>{worst === 'heavy' ? 'Heavy traffic ahead' : 'Slow traffic ahead'}</div>}
       {!following && <button type="button" className="nav-recentre" onClick={recentre}><LocateFixed size={18} /> Re-centre</button>}
 
       <section ref={sheet} className="nav-sheet">
