@@ -141,6 +141,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
   const [activityFilter, setActivityFilter] = useState<'all' | 'attention' | 'waiting' | 'live' | 'done'>('all')
   const [activityQuery, setActivityQuery] = useState('')
   const [showAllActivity, setShowAllActivity] = useState(false)
+  const [openActivity, setOpenActivity] = useState<string | null>(null)
   const [allocating, setAllocating] = useState<Ride | null>(null)
   const [alloc, setAlloc] = useState({ car: '', driverId: '', slot: '' })
   const [allocError, setAllocError] = useState('')
@@ -434,11 +435,8 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
               <div><h2>User activity <span className="chip warn">{activityRows.length}</span></h2><small className="muted">Every ride request: user, OTP, driver, car and time slot. New requests appear here within seconds.</small></div>
               <button type="button" className="btn btn-primary compact" onClick={() => setShowForm(true)}><Plus size={15} /> New request</button>
             </div>
-            <div className="crm-stats">
-              <div><small>Waiting for a car</small><strong>{activityCounts.waiting}</strong></div>
-              <div><small>Need allocation</small><strong className={activityCounts.attention ? 'alert-number' : ''}>{activityCounts.attention}</strong></div>
-              <div><small>In progress</small><strong>{activityCounts.live}</strong></div>
-              <div><small>Finished</small><strong>{activityCounts.done}</strong></div>
+            <div className="crm-stats act-stats">
+              {([['waiting', 'Waiting for a car', activityCounts.waiting, ''], ['attention', 'Need allocation', activityCounts.attention, activityCounts.attention ? 'alert-number' : ''], ['live', 'In progress', activityCounts.live, ''], ['done', 'Finished', activityCounts.done, '']] as const).map(([id, label, n, cls]) => <button type="button" key={id} className={`stat-tile ${activityFilter === id ? 'on' : ''}`} onClick={() => { setActivityFilter(activityFilter === id ? 'all' : id); setShowAllActivity(false) }}><small>{label}</small><strong className={cls}>{n}</strong></button>)}
             </div>
             <div className="crm-toolbar">
               <span className="input search-input"><Search size={16} /><input value={activityQuery} onChange={(e) => setActivityQuery(e.target.value)} placeholder="Search by user, phone, OTP or ride ID" aria-label="Search user activity" /></span>
@@ -446,25 +444,44 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
                 {([['all', 'All'], ['attention', 'Need allocation'], ['waiting', 'Waiting'], ['live', 'In progress'], ['done', 'Finished']] as const).map(([id, label]) => <button type="button" key={id} className={activityFilter === id ? 'on' : ''} onClick={() => { setActivityFilter(id); setShowAllActivity(false) }}>{label} <span>{activityCounts[id]}</span></button>)}
               </div>
             </div>
-            {shownActivity.length ? <div className="table wide">
-              <div className="trow thead arow"><span>Requested</span><span>User</span><span>OTP</span><span>Driver and car</span><span>Route</span><span>Time slot</span><span>Status</span><span /></div>
-              {shownActivity.map((r) => <div className={`trow arow ${newIds.includes(r.id) ? 'is-new' : ''} ${r.attention ? 'needs-attention' : ''}`} key={r.id}>
-                <span className="cell"><span className="grow"><strong>{clockTime(r.createdAt)}</strong><small title={r.id}>{ago(r.createdAt)}</small></span></span>
-                <span className="cell"><span className="avatar sm">{initials(r.riderName)}</span><span className="grow"><strong>{r.riderName}{r.extraPassengers > 0 && <em className="extra">+{r.extraPassengers}</em>}</strong><small>{r.phone || r.riderEmail || 'No contact'} · {riderCount(r)}</small></span></span>
-                <span className="cell">{r.otp ? <span className="otp-chip" title="Ride PIN the rider gives the driver">{r.otp}</span> : <span className="muted">—</span>}</span>
-                <span className="cell"><span className="grow"><strong>{r.driverName}</strong><small>{r.vehicle} · {r.plate}</small></span></span>
-                <span className="cell"><span className="grow"><strong>{shortPlace(r.pickup)}</strong><small>→ {shortPlace(r.destination)}</small></span></span>
-                <span className="cell"><span className="grow">{r.allocation
-                  ? <><strong>{clockTime(r.allocation.slotStart)} – {clockTime(r.allocation.slotEnd)}</strong><small className="ok-text">Allocated by admin</small></>
-                  : r.status === 'requested'
-                    ? <><strong>Est. {clockTime(r.startAt)}</strong><small>{r.pickupTime ? `Rider asked for ${new Date(r.pickupTime).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : 'As soon as possible'}</small></>
-                    : r.startedAt ? <><strong>Started {clockTime(r.startedAt)}</strong><small>{r.tripMin} min trip</small></> : <span className="muted">—</span>}</span></span>
-                <span className="cell"><span className="grow"><span className={`chip ${ACTIVITY_STATUS[r.status]?.tone ?? 'grey'}`}>{r.allocation && r.status === 'requested' ? 'Allocated' : ACTIVITY_STATUS[r.status]?.label ?? r.status}</span>{r.attention && <small className="attention-note">{r.attention.text}</small>}</span></span>
-                <span className="cell end">{r.status === 'requested' && <>
-                  <button type="button" className={`btn compact ${r.attention ? 'btn-primary' : 'btn-ghost'}`} onClick={() => openAllocate(r)}>{r.allocation ? 'Reallocate' : 'Allocate'}</button>
-                  <button type="button" className="icon-btn danger" aria-label={`Cancel ${r.riderName}'s request`} title="Cancel request" onClick={() => { if (window.confirm(`Cancel ${r.riderName}'s request?`)) void run(() => post(`/admin/rides/${r.id}/cancel`), `${r.riderName}'s request cancelled`) }}><X size={16} /></button>
-                </>}</span>
-              </div>)}
+            {shownActivity.length ? <div className="act-list">
+              {shownActivity.map((r) => {
+                const open = openActivity === r.id
+                const group = activityGroup(r)
+                const statusLabel = r.allocation && r.status === 'requested' ? 'Allocated' : ACTIVITY_STATUS[r.status]?.label ?? r.status
+                const slot = r.allocation
+                  ? `${clockTime(r.allocation.slotStart)} – ${clockTime(r.allocation.slotEnd)} · allocated by admin`
+                  : r.status === 'requested' ? `Est. start ${clockTime(r.startAt)}${r.pickupTime ? ` · rider asked for ${new Date(r.pickupTime).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ' · as soon as possible'}`
+                    : r.startedAt ? `Started ${clockTime(r.startedAt)} · ${r.tripMin} min trip` : '—'
+                return <article className={`act-card g-${group} ${open ? 'open' : ''} ${newIds.includes(r.id) ? 'is-new' : ''}`} key={r.id}>
+                  <button type="button" className="act-main" aria-expanded={open} onClick={() => setOpenActivity(open ? null : r.id)}>
+                    <span className="avatar">{initials(r.riderName)}</span>
+                    <span className="act-who"><strong>{r.riderName}{r.extraPassengers > 0 && <em className="extra">+{r.extraPassengers}</em>}</strong><small>{r.phone || r.riderEmail || 'No contact'} · {riderCount(r)}</small></span>
+                    <span className="act-route">
+                      <span className="rt-dots" aria-hidden="true"><i className="from" /><i className="line" /><i className="to" /></span>
+                      <span className="rt-text"><strong>{shortPlace(r.pickup)}</strong><small>{shortPlace(r.destination)}</small></span>
+                    </span>
+                    <span className="act-meta"><CarFront size={14} /><span><strong>{r.driverName}</strong><small>{r.vehicle}</small></span></span>
+                    <span className="act-time"><strong>{clockTime(r.createdAt)}</strong><small title={r.id}>{ago(r.createdAt)}</small></span>
+                    <span className="act-status"><span className={`chip ${ACTIVITY_STATUS[r.status]?.tone ?? 'grey'}`}>{statusLabel}</span>{r.otp && <span className="otp-chip sm" title="Ride PIN">{r.otp}</span>}</span>
+                    <ChevronRight size={18} className="act-chevron" />
+                  </button>
+                  {r.attention && <div className="act-alert"><AlertCircle size={15} />{r.attention.text}</div>}
+                  {open && <div className="act-detail">
+                    <div className="det-block wide"><small>Route</small>
+                      <div className="det-route"><span className="rt-dots" aria-hidden="true"><i className="from" /><i className="line" /><i className="to" /></span><span><strong>{r.pickup}</strong><strong>{r.destination}</strong></span></div>
+                    </div>
+                    <div className="det-block"><small>Driver and car</small><strong>{r.driverName}</strong><span>{r.vehicle} · {r.plate}</span></div>
+                    <div className="det-block"><small>Time slot</small><strong>{slot}</strong>{r.status === 'requested' && r.waitMin > 0 && <span>Waiting about {r.waitMin} min</span>}</div>
+                    <div className="det-block"><small>Rider</small><strong>{r.riderName} · {riderCount(r)}</strong>{r.phone ? <a className="phone-link" href={`tel:${r.phone}`}><Phone size={13} /> {r.phone}</a> : <span>{r.riderEmail || 'No contact'}</span>}</div>
+                    <div className="det-block"><small>Ride PIN</small>{r.otp ? <span className="otp-chip">{r.otp}</span> : <span>Not active</span>}<span>{r.id}</span></div>
+                    {r.status === 'requested' && <div className="det-actions">
+                      <button type="button" className={`btn compact ${r.attention ? 'btn-primary' : 'btn-ghost'}`} onClick={() => openAllocate(r)}>{r.allocation ? 'Reallocate' : 'Allocate'}</button>
+                      <button type="button" className="btn btn-ghost compact danger-text" onClick={() => { if (window.confirm(`Cancel ${r.riderName}'s request?`)) void run(() => post(`/admin/rides/${r.id}/cancel`), `${r.riderName}'s request cancelled`) }}><X size={15} /> Cancel request</button>
+                    </div>}
+                  </div>}
+                </article>
+              })}
               {filteredActivity.length > 10 && <button type="button" className="show-more" onClick={() => setShowAllActivity((v) => !v)}>{showAllActivity ? 'Show fewer' : `Show all ${filteredActivity.length}`}</button>}
             </div> : <div className="empty"><Check size={22} />{activityRows.length ? 'No requests match your filters.' : 'No ride requests yet. They show up here the moment a rider books.'}</div>}
           </section>
