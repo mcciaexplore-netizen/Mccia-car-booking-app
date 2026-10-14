@@ -104,6 +104,8 @@ export async function notifyCancelled(r: Ride) {
  * Approved rides remind the rider and the driver 30 minutes before the planned start. There is no background timer:
  * this runs on API requests (the apps poll every few seconds). Notification ids are fixed per ride and threshold, so two
  * API replicas can never send the same reminder twice. */
+// Minutes before the planned start; override with REMINDER_MIN (e.g. 2 to test quickly).
+const REMINDER_MIN = Number(process.env.REMINDER_MIN) > 0 ? Number(process.env.REMINDER_MIN) : 30
 let lastRun = 0
 export function runReminders() {
   const now = Date.now()
@@ -119,7 +121,7 @@ export function runReminders() {
     const today = new Date(now).toLocaleDateString('en-IN', { timeZone: IST, weekday: 'short', day: 'numeric', month: 'short' })
     const label = day === today ? at : `${day}, ${at}`
     // The closest threshold that has been reached; an earlier one is never sent late.
-    const t = [30].find((x) => now >= start - x * 60_000)
+    const t = [REMINDER_MIN].find((x) => now >= start - x * 60_000)
     if (t) {
       const key = `rem${t}-${r.id}`
       if (db.notifications.some((n) => n.id === `${key}-driver`)) continue
