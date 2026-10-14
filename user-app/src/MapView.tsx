@@ -8,7 +8,7 @@ import type { Coords } from './places'
 type Props = {
   pickup?: Coords | null
   destination?: Coords | null
-  status: 'requested' | 'accepted' | 'started' | 'cancelled' | 'declined' | 'completed'
+  status: 'requested' | 'held' | 'approved' | 'accepted' | 'started' | 'cancelled' | 'declined' | 'completed'
   /** 0..1 progress of the driver toward pickup (used only until real GPS arrives). */
   arrivalProgress: number
   /** 0..1 progress of the trip toward the destination (used only until real GPS arrives). */
@@ -32,12 +32,28 @@ function pointAlong(path: LL[], t: number): LL {
   return path[path.length - 1]
 }
 
+// Smooth delta animation: slide the car marker from where it is to the new GPS fix instead of jumping.
+function glide(marker: AdMarker, to: LL, state: { current: { raf: number; at: LL | null } }, ms = 1800) {
+  const s = state.current
+  cancelAnimationFrame(s.raf)
+  const from = s.at ?? to
+  const t0 = performance.now()
+  const step = (t: number) => {
+    const k = Math.min(1, (t - t0) / ms)
+    s.at = { lat: from.lat + (to.lat - from.lat) * k, lng: from.lng + (to.lng - from.lng) * k }
+    marker.setPosition(s.at)
+    if (k < 1) s.raf = requestAnimationFrame(step)
+  }
+  s.raf = requestAnimationFrame(step)
+}
+
 export default function MapView({ pickup, destination, status, arrivalProgress, tripProgress, live }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const map = useRef<MapAdapter | null>(null)
   const car = useRef<AdMarker | null>(null)
   const [ready, setReady] = useState(false)
   const [route, setRoute] = useState<LL[]>([])
+  const glideRef = useRef<{ raf: number; at: LL | null }>({ raf: 0, at: null })
 
   const a: LL | null = pickup ? { lat: pickup.lat, lng: pickup.lon } : null
   const b: LL | null = destination ? { lat: destination.lat, lng: destination.lon } : null
@@ -54,7 +70,7 @@ export default function MapView({ pickup, destination, status, arrivalProgress, 
       map.current = m
       setReady(true)
     })
-    return () => { cancelled = true; car.current?.remove(); car.current = null; created?.destroy(); map.current = null }
+    return () => { cancelled = true; cancelAnimationFrame(glideRef.current.raf); car.current?.remove(); car.current = null; created?.destroy(); map.current = null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -93,7 +109,10 @@ export default function MapView({ pickup, destination, status, arrivalProgress, 
     const start: LL = { lat: a.lat + 0.012, lng: a.lng + 0.012 }
     const pos: LL = live ? { lat: live.lat, lng: live.lon } : status === 'accepted' ? lerp(start, a, arrivalProgress) : pointAlong(path, tripProgress)
     if (live) m.panIfOutside(pos)
-    if (car.current) car.current.setPosition(pos)
+    if (car.current) {
+      if (live) glide(car.current, pos, glideRef)
+      else car.current.setPosition(pos)
+    }
     else car.current = m.addMarker(pos, `<span class="mk car">${CAR_SVG}</span>`, 'car-pin')
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, status, arrivalProgress, tripProgress, route, aKey, bKey, live?.lat, live?.lon])

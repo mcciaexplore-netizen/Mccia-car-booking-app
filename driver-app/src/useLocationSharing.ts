@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { metres } from './navigation'
 import { api } from './api'
+import { connectDriverSocket } from './realtime'
 
 type Base = {
   status: 'off' | 'asking' | 'on' | 'denied' | 'unavailable'
@@ -17,11 +19,12 @@ const SEND_EVERY_MS = 3000
 
 // Shares the phone's GPS position with the backend while `active` is true (a ride is accepted or started).
 // The latest fix is re-sent every few seconds even when parked, so "stopped" is never confused with "no signal".
-export function useLocationSharing(active: boolean): Sharing {
+export function useLocationSharing(active: boolean, rideIds: string[] = []): Sharing {
   const [sharing, setSharing] = useState<Base>({ status: 'off', state: null, speedKmh: 0, accuracy: null })
   const [fix, setFix] = useState<Position | null>(null)
   const lastShown = useRef(0)
   const latest = useRef<Fix | null>(null)
+  const rideKey = rideIds.join(',')
 
   useEffect(() => {
     if (!active) { latest.current = null; queueMicrotask(() => setFix(null)); return }
@@ -29,6 +32,10 @@ export function useLocationSharing(active: boolean): Sharing {
     queueMicrotask(() => setSharing((s) => (s.status === 'on' ? s : { ...s, status: 'asking' })))
 
     let alive = true
+    // WebSocket push every ~2 s for live tracking; the HTTP post below stays as the stored/fallback copy.
+    const socket = rideKey ? connectDriverSocket(rideKey.split(',')) : null
+    const pushLive = () => { const f = latest.current; if (f) socket?.send({ latitude: f.lat, longitude: f.lon, bearing: f.heading, speed: f.speed }) }
+    const liveTimer = window.setInterval(pushLive, 2000)
     let sending = false
     let wake: { release: () => Promise<void> } | null = null
 
@@ -47,11 +54,15 @@ export function useLocationSharing(active: boolean): Sharing {
 
     const watch = navigator.geolocation.watchPosition(
       ({ coords }) => {
-        const first = latest.current === null
-        latest.current = { lat: coords.latitude, lon: coords.longitude, speed: coords.speed, heading: coords.heading, accuracy: coords.accuracy, at: Date.now() }
+        const prev = latest.current
+        const first = prev === null
+        // Some devices report no speed: work it out from how far the car moved since the last reading.
+        let speed = coords.speed
+        if (speed === null && prev && Date.now() - prev.at > 500) speed = metres({ lat: prev.lat, lng: prev.lon }, { lat: coords.latitude, lng: coords.longitude }) / ((Date.now() - prev.at) / 1000)
+        latest.current = { lat: coords.latitude, lon: coords.longitude, speed, heading: coords.heading, accuracy: coords.accuracy, at: Date.now() }
         if (Date.now() - lastShown.current > 900) {
           lastShown.current = Date.now()
-          setFix({ lat: coords.latitude, lon: coords.longitude, heading: coords.heading, speedKmh: coords.speed === null ? null : Math.round(coords.speed * 3.6), accuracy: coords.accuracy })
+          setFix({ lat: coords.latitude, lon: coords.longitude, heading: coords.heading, speedKmh: speed === null ? null : Math.round(speed * 3.6), accuracy: coords.accuracy })
         }
         if (first) void send()
       },
@@ -75,10 +86,12 @@ export function useLocationSharing(active: boolean): Sharing {
       alive = false
       navigator.geolocation.clearWatch(watch)
       window.clearInterval(timer)
+      window.clearInterval(liveTimer)
+      socket?.close()
       document.removeEventListener('visibilitychange', onVisible)
       void wake?.release().catch(() => undefined)
     }
-  }, [active])
+  }, [active, rideKey])
 
   return active ? { ...sharing, fix } : { status: 'off', state: null, speedKmh: 0, accuracy: null, fix: null }
 }

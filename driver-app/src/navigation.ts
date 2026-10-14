@@ -159,7 +159,7 @@ export function trafficSegments(route: Route): TrafficSegment[] {
     const to = route.steps[i + 1]?.fromIndex ?? last
     if (to <= s.fromIndex) return
     const kmh = s.duration > 0 ? (s.distance / s.duration) * 3.6 : 99
-    const level: Traffic = s.distance < 150 ? 'free' : kmh < 10 ? 'heavy' : kmh < 20 ? 'slow' : 'free'
+    const level: Traffic = s.distance < 150 ? 'free' : kmh < 8 ? 'heavy' : kmh < 14 ? 'slow' : 'free'
     const prev = out[out.length - 1]
     if (prev && prev.level === level && prev.to === s.fromIndex) prev.to = to
     else out.push({ from: s.fromIndex, to, level })

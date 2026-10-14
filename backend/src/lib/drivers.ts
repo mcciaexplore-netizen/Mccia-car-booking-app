@@ -56,10 +56,10 @@ export function driverReport() {
       status: active ? (active.status === 'started' ? 'on-trip' : 'to-pickup') : account ? 'available' : 'not-registered',
       password: account?.plainPassword ?? null,
       // Every open ride for this driver with the OTP the rider gives them at pickup.
-      otps: rides.filter((r) => ['requested', 'accepted', 'started'].includes(r.status)).map((r) => ({ rideId: r.id, rider: r.riderName, status: r.status, otp: r.otp })),
+      otps: rides.filter((r) => ['approved', 'accepted', 'started'].includes(r.status)).map((r) => ({ rideId: r.id, rider: r.riderName, status: r.status, otp: r.otp })),
       current: active ? { rideId: active.id, otp: active.otp, car: active.vehicle, plate: active.plate, rider: active.riderName, passengers: active.passengers, pickup: active.pickup, destination: active.destination } : null,
       live: active ? liveOf(d.id) : null,
-      queued: count('requested'),
+      queued: count('approved'),
       total: rides.length,
       completed: completed.length,
       completedToday: completed.filter((r) => new Date(r.completedAt ?? 0) >= today).length,
@@ -67,7 +67,7 @@ export function driverReport() {
       cancelled: count('cancelled'),
       avgTripMin: tripMinutes.length ? Math.round(tripMinutes.reduce((a, b) => a + b, 0) / tripMinutes.length) : null,
       lastActive: stamps.length ? iso(Math.max(...stamps)) : null,
-      recent: rides.slice(-6).reverse().map((r) => ({ id: r.id, rider: r.riderName, pickup: r.pickup, destination: r.destination, vehicle: r.vehicle, status: r.status, otp: ['requested', 'accepted', 'started'].includes(r.status) ? r.otp : null, at: r.completedAt ?? r.startedAt ?? r.acceptedAt ?? r.createdAt })),
+      recent: rides.slice(-6).reverse().map((r) => ({ id: r.id, rider: r.riderName, pickup: r.pickup, destination: r.destination, vehicle: r.vehicle, status: r.status, otp: ['approved', 'accepted', 'started'].includes(r.status) ? r.otp : null, at: r.completedAt ?? r.startedAt ?? r.acceptedAt ?? r.createdAt })),
     }
   })
 }
@@ -77,9 +77,13 @@ export function removeDriver(id: string): Result<{ declined: number }> {
   const known = roster().some((d) => d.id === id)
   if (!known) return { ok: false, error: 'Driver not found.', status: 404 }
   if (db.rides.some((r) => r.driverId === id && LIVE.includes(r.status))) return { ok: false, error: 'This driver has a trip in progress. End the trip first.', status: 409 }
-  // Riders still waiting for this driver are told the driver is unavailable.
+  // Rides already approved for this driver go back to the admin's queue to be given to another driver.
   let declined = 0
-  for (const r of db.rides) if (r.driverId === id && r.status === 'requested') { r.status = 'declined'; declined++ }
+  for (const r of db.rides) if (r.driverId === id && r.status === 'approved') {
+    r.status = 'requested'; r.returnedNote = `${r.driverName} was removed`
+    r.driverId = ''; r.driverName = ''; r.vehicle = ''; r.plate = ''; r.approvedAt = null
+    declined++
+  }
   if (declined) save.rides()
   const at = db.drivers.findIndex((a) => a.driverId === id)
   if (at >= 0) { db.drivers.splice(at, 1); save.drivers() }

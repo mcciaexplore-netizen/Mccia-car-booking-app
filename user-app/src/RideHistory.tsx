@@ -1,35 +1,42 @@
+import { useState } from 'react'
 import { ArrowRight, CarFront, Clock3, RotateCcw } from 'lucide-react'
-import type { Coords } from './places'
+import { api, ApiError } from './api'
+import { canCancel, isActive, routeText, STATUS_LABEL, whenText, type Ride } from './rides'
 
-export type PastRide = {
-  id: string; pickup: string; destination: string; pickupCoords: Coords | null; destinationCoords: Coords | null
-  driverName: string; vehicle: string; plate: string; tripMin: number; passengers: number
-  status: 'requested' | 'accepted' | 'started' | 'cancelled' | 'declined' | 'completed'
-  createdAt: string; slot: { ready: boolean } | null; allocation?: { slotStart: string; slotEnd: string } | null
-}
-
-const LABEL: Record<PastRide['status'], [string, string]> = {
-  requested: ['Waiting', 'warn'], accepted: ['Driver on the way', ''], started: ['In progress', 'green'],
-  completed: ['Completed', 'green'], cancelled: ['Cancelled', 'grey'], declined: ['Driver unavailable', 'red'],
-}
-export const isActive = (r: PastRide) => ['requested', 'accepted', 'started'].includes(r.status)
-
-export default function RideHistory({ rides, limit, onOpen, onRebook }: {
-  rides: PastRide[] | null; limit?: number; onOpen: (id: string) => void; onRebook: (ride: PastRide) => void
+export default function RideHistory({ rides, limit, onOpen, onRebook, onChanged }: {
+  rides: Ride[] | null; limit?: number; onOpen: (id: string) => void; onRebook: (ride: Ride) => void; onChanged: () => void
 }) {
+  const [error, setError] = useState('')
   const shown = rides ? rides.slice(0, limit) : []
+
+  async function cancel(r: Ride) {
+    if (!window.confirm('Cancel this request?')) return
+    try { await api(`/rides/${r.id}/cancel`, { method: 'POST', body: {} }); setError(''); onChanged() }
+    catch (e) { setError(e instanceof ApiError ? e.message : 'Could not cancel.') }
+  }
+
   return (
     <section className="stack" aria-label="Ride history">
-      {rides && rides.length === 0 && <div className="card empty">No rides yet. Your bookings will show up here.</div>}
+      {error && <div className="alert error" role="alert">{error}</div>}
+      {rides && rides.length === 0 && <div className="card empty">No rides yet. Your requests will show up here.</div>}
       {shown.map((r) => {
-        const [text, tone] = LABEL[r.status]
+        const [text, tone] = STATUS_LABEL[r.status]
+        const assigned = ['approved', 'accepted', 'started'].includes(r.status)
         return (
           <article className="card" key={r.id}>
             <div className="card-head"><span className="eyebrow">{new Date(r.createdAt).toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })} · {r.id}</span><span className={`chip ${tone}`}>{text}</span></div>
-            <div className="ride-route"><strong>{r.pickup}</strong><ArrowRight size={14} /><strong>{r.destination}</strong></div>
-            <div className="meta-line"><span><CarFront size={14} /> {r.vehicle} · {r.plate}</span><span>{r.driverName}</span><span><Clock3 size={14} /> {r.tripMin} min</span></div>
+            <div className="ride-route"><strong>{routeText(r).join(' → ')}</strong><ArrowRight size={14} /></div>
+            <div className="meta-line">
+              <span><Clock3 size={14} /> {whenText(r)}</span>
+              {assigned && <span><CarFront size={14} /> {r.vehicle} · {r.plate}</span>}
+              {assigned && <span>{r.driverName}</span>}
+            </div>
+            {r.status === 'held' && r.holdNote && <p className="hint">On hold: {r.holdNote}</p>}
             {isActive(r)
-              ? <button type="button" className="btn btn-primary" onClick={() => onOpen(r.id)}>View ride</button>
+              ? <div className="row-actions">
+                <button type="button" className="btn btn-primary" onClick={() => onOpen(r.id)}>View ride</button>
+                {canCancel(r) && <button type="button" className="btn btn-danger" onClick={() => cancel(r)}>Cancel request</button>}
+              </div>
               : <button type="button" className="btn btn-ghost" onClick={() => onRebook(r)}><RotateCcw size={15} /> Book again</button>}
           </article>
         )

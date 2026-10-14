@@ -1,8 +1,9 @@
-// One small map interface (Leaflet). Map tiles come from Geoapify when a key is set; if its tiles fail to load (bad key,
+// One small map interface. Default engine is OpenFreeMap + MapLibre (free, no key); Leaflet is the fallback. Map tiles come from Geoapify when a key is set; if its tiles fail to load (bad key,
 // blocked domain, quota) the map switches to plain OpenStreetMap tiles by itself, so it is never blank.
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { GEOAPIFY_KEY } from './geo'
+import { openFreeMapAdapter, webglAvailable } from './openFreeMapAdapter'
 
 export type LL = { lat: number; lng: number }
 export type AdMarker = { setPosition: (p: LL) => void; getElement: () => HTMLElement | null; remove: () => void }
@@ -11,7 +12,7 @@ export type LineStyle = { color: string; weight: number; opacity: number }
 export type DotStyle = { radius: number; fill: string; stroke: string; strokeWidth: number }
 
 export interface MapAdapter {
-  kind: 'geoapify' | 'osm'
+  kind: 'openfreemap' | 'geoapify' | 'osm'
   setView: (center: LL, zoom: number) => void
   fitBounds: (points: LL[], padding: number, maxZoom?: number) => void
   panIfOutside: (p: LL) => void
@@ -83,6 +84,13 @@ function newHost(container: HTMLElement) {
 
 export async function createMap(container: HTMLElement, opts: { center: LL; zoom: number }): Promise<MapAdapter> {
   const host = newHost(container)
-  const adapter = osmAdapter(host, opts.center, opts.zoom)
+  let adapter: MapAdapter
+  try {
+    if (!webglAvailable()) throw new Error('WebGL unavailable')
+    adapter = openFreeMapAdapter(host, opts.center, opts.zoom)
+  } catch (e) {
+    console.warn('[maps] OpenFreeMap unavailable, falling back to Leaflet.', e)
+    adapter = osmAdapter(host, opts.center, opts.zoom)
+  }
   return { ...adapter, destroy: () => { adapter.destroy(); host.remove() } }
 }

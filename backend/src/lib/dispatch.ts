@@ -1,12 +1,8 @@
 // Fleet, roster, queue scheduling and the views each app receives. Ported from the old mock-api server.
 import { randomInt } from 'node:crypto'
-import nodemailer from 'nodemailer'
 import { db, save, type Coords, type Ride } from './db'
 
-export const CARS = [
-  { name: 'Ertiga', seats: 6, plate: 'MH 12 AB 1001', pickupEtaMin: 22, depot: { lat: 18.5308, lon: 73.8475 } },
-  { name: 'Innova', seats: 6, plate: 'MH 12 CD 1002', pickupEtaMin: 34, depot: { lat: 18.5089, lon: 73.9259 } },
-]
+export const CARS = db.cars // live list, edited from the admin dashboard
 export const ARRIVAL_OPTIONS = [5, 10, 15]
 
 // No pre-filled drivers: the roster is exactly the drivers who have signed up or were added by an admin.
@@ -18,37 +14,10 @@ export const roster = () => [
 ]
 export const phoneOf = (driverId: string) => db.drivers.find((a) => a.driverId === driverId)?.phone ?? roster().find((d) => d.id === driverId)?.demoPhone ?? ''
 
-/* ---------- PIN delivery ---------- */
-const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM } = process.env
-const mailer = SMTP_HOST && SMTP_USER && SMTP_PASS
-  ? nodemailer.createTransport({ host: SMTP_HOST, port: Number(SMTP_PORT ?? 465), secure: Number(SMTP_PORT ?? 465) === 465, auth: { user: SMTP_USER, pass: SMTP_PASS } })
-  : null
-
-export const maskEmail = (e: string) => e.replace(/^(.).*(@.*)$/, (_m, a, d) => `${a}***${d}`)
-
-export async function deliverOtp(ride: Ride) {
-  if (!ride.riderEmail || !mailer) {
-    console.log(`[demo] PIN for ${ride.id}: ${ride.otp} (${ride.riderEmail || 'no email'})`)
-    ride.otpDelivery = 'not-configured'; save.rides()
-    return
-  }
-  try {
-    await mailer.sendMail({
-      from: SMTP_FROM ?? SMTP_USER, to: ride.riderEmail, subject: `Your MCCIA ride PIN: ${ride.otp}`,
-      text: `Hi ${ride.riderName},\n\nYour ride PIN is ${ride.otp}. Tell it to your driver (${ride.driverName}) to start the trip.\n\nRide ${ride.id}: ${ride.pickup} to ${ride.destination}\n`,
-    })
-    ride.otpDelivery = 'sent'
-  } catch (err) {
-    console.log(`[demo] email failed for ${ride.id}: ${(err as Error).message}`)
-    ride.otpDelivery = 'failed'
-  }
-  save.rides()
-}
-
 export function newOtp() {
   for (let i = 0; i < 50; i++) {
     const otp = String(randomInt(0, 10000)).padStart(4, '0')
-    if (!db.rides.some((r) => r.otp === otp && (r.status === 'requested' || r.status === 'accepted'))) return otp
+    if (!db.rides.some((r) => r.otp === otp && ['requested', 'held', 'approved', 'accepted', 'started'].includes(r.status))) return otp
   }
   throw new Error('No free PINs')
 }
@@ -65,131 +34,102 @@ export const validCoords = (c: unknown): Coords | null => {
   return x && Number.isFinite(x.lat) && Number.isFinite(x.lon) ? { lat: x.lat as number, lon: x.lon as number } : null
 }
 
-/* ---------- Queue and time slots ----------
- * One physical car per type and one ride per driver at a time. Waiting requests are served first come, first served. */
+/* ---------- Time windows and conflicts ----------
+ * Requests wait for an admin. The admin approves one by choosing a car and a driver; from then on the ride holds that car and
+ * driver for its time window. One car and one driver can never be booked for two overlapping windows. */
 export const LIVE = ['accepted', 'started']
+export const BOOKED = ['approved', 'accepted', 'started'] // rides that hold a car and a driver
+export const OPEN = ['requested', 'held', 'approved', 'accepted', 'started']
 const QUEUED_PICKUP_MIN = 10
-export const ALLOC_GRACE_MIN = 10 // a driver may accept an admin-allocated ride this long before its slot starts
-export const slotLengthMin = (tripMin: number) => QUEUED_PICKUP_MIN + tripMin
+const STOP_MIN = 10 // time allowed for each layover
+export const ACCEPT_EARLY_MIN = 30 // a driver can start heading to pickup this long before the planned start
+export const slotLengthMin = (tripMin: number, stops = 0) => QUEUED_PICKUP_MIN + tripMin + stops * STOP_MIN
 
-type Slot = { startAt: number; endAt: number; position: number; waitMin: number; ready: boolean; blockedBy: 'car' | 'driver' | 'both' | 'slot' | null }
+const ms = (iso?: string | null) => (iso ? new Date(iso).getTime() : NaN)
 
-export function schedule() {
+// Planned start and end (epoch ms) of a ride. "Now" rides start when they are approved; multi-day rides run until endAt.
+export function rideWindow(r: Ride, now = Date.now()) {
+  const live = LIVE.includes(r.status)
+  const start = live ? ms(r.startedAt ?? r.acceptedAt) : Number.isFinite(ms(r.startAt)) ? ms(r.startAt) : ms(r.approvedAt ?? r.createdAt)
+  let end = Number.isFinite(ms(r.endAt)) ? ms(r.endAt) : start + slotLengthMin(r.tripMin, r.stops?.length ?? 0) * 60_000
+  if (live) end = Math.max(end, now + 5 * 60_000)
+  return { start, end }
+}
+
+const iso = (t: number) => new Date(t).toISOString()
+
+// Another approved or live ride that overlaps the window on the same car or driver, if any.
+export function windowConflict(rideId: string, car: string, driverId: string, start: number, end: number) {
   const now = Date.now()
-  const carFree: Record<string, number> = {}
-  const driverFree: Record<string, number> = {}
-  const slots: Record<string, Slot> = {}
-  const hold = (ride: Ride, end: number) => {
-    carFree[ride.vehicle] = Math.max(carFree[ride.vehicle] ?? 0, end)
-    driverFree[ride.driverId] = Math.max(driverFree[ride.driverId] ?? 0, end)
+  for (const o of db.rides) {
+    if (o.id === rideId || !BOOKED.includes(o.status)) continue
+    if (o.vehicle !== car && o.driverId !== driverId) continue
+    const w = rideWindow(o, now)
+    if (start < w.end && end > w.start) return { ride: o, what: o.vehicle === car ? car : o.driverName, from: w.start, to: w.end }
   }
-  const ahead: Ride[] = []
-  for (const r of db.rides.filter((x) => LIVE.includes(x.status))) {
-    const from = new Date(r.startedAt ?? r.acceptedAt ?? r.createdAt).getTime()
-    const est = from + ((r.status === 'started' ? 0 : r.arrivalMin ?? 10) + r.tripMin) * 60_000
-    hold(r, Math.max(est, now + 5 * 60_000))
-    slots[r.id] = { startAt: from, endAt: est, position: 0, waitMin: 0, ready: false, blockedBy: null }
-    ahead.push(r)
-  }
-  const queued = db.rides.filter((x) => x.status === 'requested').sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt))
-  for (const r of queued) {
-    if (r.allocation) {
-      // An admin fixed this ride's car, driver and time slot: honour it instead of the first-come-first-served estimate.
-      const start = new Date(r.allocation.slotStart).getTime()
-      const end = new Date(r.allocation.slotEnd).getTime()
-      const ready = now >= start - ALLOC_GRACE_MIN * 60_000
-      slots[r.id] = { startAt: start, endAt: end, position: ready ? 0 : 1, waitMin: Math.max(0, Math.ceil((start - now) / 60_000)), ready, blockedBy: ready ? null : 'slot' }
-      hold(r, end)
-      ahead.push(r)
-      continue
-    }
-    const cf = carFree[r.vehicle] ?? 0
-    const df = driverFree[r.driverId] ?? 0
-    const start = Math.max(now, cf, df)
-    const end = start + (QUEUED_PICKUP_MIN + r.tripMin) * 60_000
-    const position = ahead.filter((o) => o.vehicle === r.vehicle || o.driverId === r.driverId).length
-    const blockedBy = start <= now ? null : cf > now && df > now ? 'both' : cf > now ? 'car' : 'driver'
-    slots[r.id] = { startAt: start, endAt: end, position, waitMin: Math.max(0, Math.ceil((start - now) / 60_000)), ready: position === 0, blockedBy }
-    hold(r, end)
-    ahead.push(r)
-  }
-  return { now, slots, carFree, driverFree }
+  return null
 }
-export type Schedule = ReturnType<typeof schedule>
 
-const iso = (ms: number) => new Date(ms).toISOString()
-const slotOf = (s: Schedule, ride: Ride) => {
-  const x = s.slots[ride.id]
-  return x ? { ...x, startAt: iso(x.startAt), endAt: iso(x.endAt) } : null
-}
-export const minsFree = (s: Schedule, t?: number) => (t && t > s.now ? Math.ceil((t - s.now) / 60_000) : 0)
+// Can the driver start heading to pickup yet?
+export const canStartNow = (r: Ride, now = Date.now()) => r.tripType === 'now' || !r.startAt || now >= ms(r.startAt) - ACCEPT_EARLY_MIN * 60_000
 
 // The PIN belongs to the rider; driver-facing data never includes it or the rider's email.
-export const forDriver = (ride: Ride, s = schedule()) => {
+export const forDriver = (ride: Ride) => {
   const { otp: _o, riderEmail: _e, riderId: _r, ...rest } = ride
-  return { ...rest, slot: slotOf(s, ride) }
+  const w = rideWindow(ride)
+  return { ...rest, window: { start: iso(w.start), end: iso(w.end) }, canStart: ride.status === 'approved' && canStartNow(ride) }
 }
-export const forRider = (ride: Ride, s = schedule()) => ({ ...ride, driverPhone: phoneOf(ride.driverId), slot: slotOf(s, ride), driverLive: LIVE.includes(ride.status) ? liveOf(ride.driverId) : null })
+export const forRider = (ride: Ride) => {
+  const w = rideWindow(ride)
+  const seats = CARS.find((c) => c.name === ride.vehicle)?.seats ?? null
+  return {
+    ...ride,
+    otp: BOOKED.includes(ride.status) ? ride.otp : undefined, // the PIN is shown once a car and driver are assigned
+    driverPhone: ride.driverId ? phoneOf(ride.driverId) : '', carSeats: seats,
+    window: { start: iso(w.start), end: iso(w.end) },
+    driverLive: ride.driverId && LIVE.includes(ride.status) ? liveOf(ride.driverId) : null,
+  }
+}
 
 /* ---------- Admin snapshot ---------- */
-// Why a waiting request needs the admin: the rider's driver or car is busy or not signed up. Null when nothing is wrong.
-function attentionOf(r: Ride, sl: Slot | undefined): { code: string; text: string } | null {
-  if (r.status !== 'requested' || r.allocation) return null
-  if (!db.drivers.some((a) => a.driverId === r.driverId)) return { code: 'driver-offline', text: `${r.driverName} has not signed up in the driver app` }
-  if (sl?.blockedBy === 'both') return { code: 'both', text: `${r.vehicle} and ${r.driverName} are both busy` }
-  if (sl?.blockedBy === 'car') return { code: 'car', text: `${r.vehicle} is out on another trip` }
-  if (sl?.blockedBy === 'driver') return { code: 'driver', text: `${r.driverName} is on another job` }
-  return null
-}
-
-// Another allocated or live ride that overlaps the window on the same car or driver, if any.
-export function windowConflict(rideId: string, car: string, driverId: string, start: number, end: number) {
-  const s = schedule()
-  for (const o of db.rides) {
-    if (o.id === rideId || !(LIVE.includes(o.status) || (o.status === 'requested' && o.allocation))) continue
-    if (o.vehicle !== car && o.driverId !== driverId) continue
-    const sl = s.slots[o.id]
-    if (!sl) continue
-    const oStart = sl.startAt
-    const oEnd = Math.max(sl.endAt, LIVE.includes(o.status) ? s.now : 0)
-    if (start < oEnd && end > oStart) return { ride: o, what: o.vehicle === car ? car : o.driverName, from: oStart, to: oEnd }
-  }
-  return null
-}
-
 export function overview() {
-  const s = schedule()
+  const now = Date.now()
   const view = (r: Ride) => {
-    const sl = s.slots[r.id]
     const live = LIVE.includes(r.status)
+    const w = rideWindow(r, now)
     const from = new Date(r.startedAt ?? r.acceptedAt ?? r.createdAt).getTime()
-    const elapsed = Math.max(0, (s.now - from) / 60_000)
+    const elapsed = Math.max(0, (now - from) / 60_000)
     const total = (r.status === 'accepted' ? r.arrivalMin ?? 10 : 0) + r.tripMin
     return {
       id: r.id, status: r.status, riderName: r.riderName, phone: r.phone, riderEmail: r.riderEmail ?? '', passengers: r.passengers,
-      otp: r.status === 'requested' || r.status === 'accepted' || r.status === 'started' ? r.otp : null,
-      pickupTime: r.pickupTime || null, allocation: r.allocation ?? null, driverRegistered: db.drivers.some((a) => a.driverId === r.driverId),
-      attention: attentionOf(r, sl), extraPassengers: Math.max(0, r.passengers - 1),
+      otp: OPEN.includes(r.status) ? r.otp : null,
+      tripType: r.tripType ?? 'now', startAt: r.startAt ?? null, endAt: r.endAt ?? null, stops: r.stops ?? [],
+      holdNote: r.holdNote ?? '', returnedNote: r.returnedNote ?? '', driverRegistered: !r.driverId || db.drivers.some((a) => a.driverId === r.driverId),
+      extraPassengers: Math.max(0, r.passengers - 1),
       pickup: r.pickup, destination: r.destination, pickupCoords: r.pickupCoords ?? null, destinationCoords: r.destinationCoords ?? null,
       driverId: r.driverId, driverName: r.driverName, vehicle: r.vehicle, plate: r.plate, tripMin: r.tripMin, createdAt: r.createdAt,
-      startedAt: r.startedAt, acceptedAt: r.acceptedAt,
-      phase: r.status === 'started' ? 'on-trip' : r.status === 'accepted' ? 'to-pickup' : 'waiting',
+      approvedAt: r.approvedAt ?? null, startedAt: r.startedAt, acceptedAt: r.acceptedAt,
+      reachedAt: r.reachedAt ?? null,
+      phase: r.status === 'started' ? (r.reachedAt ? 'reached' : 'on-trip') : r.status === 'accepted' ? 'to-pickup' : r.status === 'approved' ? 'assigned' : 'waiting',
       progress: live ? Math.min(0.97, elapsed / total) : 0, etaMin: live ? Math.max(1, Math.ceil(total - elapsed)) : null,
-      waitMin: sl?.waitMin ?? 0, startAt: sl ? iso(sl.startAt) : null, blockedBy: sl?.blockedBy ?? null,
-      live: live ? liveOf(r.driverId) : null,
+      window: { start: iso(w.start), end: iso(w.end) },
+      live: live && r.driverId ? liveOf(r.driverId) : null,
     }
   }
-  const activity = [...db.rides].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, 100).map(view)
-  const queue = db.rides.filter((r) => r.status === 'requested').sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt)).map(view)
+  const byNewest = (a: Ride, b: Ride) => +new Date(b.createdAt) - +new Date(a.createdAt)
+  const activity = [...db.rides].sort(byNewest).slice(0, 100).map(view)
+  // The queue is every request still waiting for the admin: new ones and ones on hold, oldest first.
+  const queue = db.rides.filter((r) => r.status === 'requested' || r.status === 'held').sort((a, b) => -byNewest(a, b)).map(view)
+  const upcoming = db.rides.filter((r) => r.status === 'approved').sort((a, b) => rideWindow(a, now).start - rideWindow(b, now).start).map(view)
   const trips = db.rides.filter((r) => LIVE.includes(r.status)).map(view)
   const cars = CARS.map((c) => ({
-    name: c.name, plate: c.plate, seats: c.seats, depot: c.depot,
+    name: c.name, plate: c.plate, seats: c.seats, depot: c.depot, model: c.model ?? '', color: c.color ?? '', fuel: c.fuel ?? '', year: c.year ?? null, notes: c.notes ?? '', gpsId: c.gpsId ?? '', gps: gpsOf(c), pickupEtaMin: c.pickupEtaMin,
     status: trips.some((t) => t.vehicle === c.name) ? 'busy' : 'idle',
     freeInMin: trips.find((t) => t.vehicle === c.name)?.etaMin ?? 0,
     trip: trips.find((t) => t.vehicle === c.name) ?? null,
-    queued: queue.filter((q) => q.vehicle === c.name).length,
+    queued: upcoming.filter((q) => q.vehicle === c.name).length,
   }))
-  return { now: iso(s.now), cars, trips, queue, activity }
+  return { now: iso(now), cars, trips, queue, upcoming, activity }
 }
 
 // Best-effort address lookup (OpenStreetMap Photon), biased to Pune. Returns null if offline or not found.
@@ -236,7 +176,63 @@ export function recordLocation(driverId: string, input: { lat: number; lon: numb
   if (prev) Object.assign(prev, next)
   else db.locations.push(next)
   save.locations()
+  // The driver's phone also confirms arrival when the car has no GPS tracker of its own.
+  const trip = db.rides.find((r) => r.driverId === driverId && r.status === 'started')
+  if (trip && !db.carGps.some((g) => g.plate === trip.plate && Date.now() - g.ts < GPS_OFFLINE_MS)) checkReached(trip.vehicle, input)
   return liveOf(driverId)
+}
+
+/* ---------- Car GPS trackers ----------
+ * Each car's own GPS unit (or the tracking vendor's webhook) posts reports to /api/gps/ingest. They are matched to a car by
+ * its tracker id (gpsId) or plate, kept as the car's latest state, and shown on the admin dashboard. */
+export const GPS_OFFLINE_MS = 5 * 60_000
+export const REACHED_M = 150 // a car this close to the destination counts as having arrived
+
+// Marks a trip in progress as "reached" the first time the car is within REACHED_M of its destination.
+function checkReached(carName: string, pos: Coords) {
+  const ride = db.rides.find((r) => r.vehicle === carName && r.status === 'started' && !r.reachedAt)
+  if (!ride?.destinationCoords || metres(pos, ride.destinationCoords) > REACHED_M) return
+  ride.reachedAt = new Date().toISOString()
+  save.rides()
+}
+
+export function findCarByGps(ref: string) {
+  const key = ref.trim().toUpperCase().replace(/[\s-]+/g, '')
+  if (!key) return undefined
+  return CARS.find((c) => (c.gpsId && c.gpsId.toUpperCase() === ref.trim().toUpperCase()) || c.plate.toUpperCase().replace(/[\s-]+/g, '') === key)
+}
+
+// Accepts one report from a tracker. Field names vary between vendors, so common aliases are understood.
+export function recordCarGps(raw: Record<string, unknown>): { ok: true; car: string } | { ok: false; error: string; status: number } {
+  const num = (...keys: string[]) => { for (const k of keys) { const v = Number(raw[k]); if (raw[k] !== undefined && raw[k] !== null && raw[k] !== '' && Number.isFinite(v)) return v } return null }
+  const ref = String(raw.deviceId ?? raw.imei ?? raw.gpsId ?? raw.plate ?? raw.vehicle ?? '')
+  const car = findCarByGps(ref)
+  if (!car) return { ok: false, error: `No car is linked to tracker "${ref}". Set the tracker id on the car in the admin dashboard.`, status: 404 }
+  const lat = num('lat', 'latitude'), lon = num('lon', 'lng', 'longitude')
+  if (lat === null || lon === null || Math.abs(lat) > 90 || Math.abs(lon) > 180) return { ok: false, error: 'Invalid position.', status: 400 }
+  const now = Date.now()
+  let deviceTs = num('ts', 'timestamp') ?? now
+  if (deviceTs < 1e12) deviceTs *= 1000 // seconds -> ms
+  if (!Number.isFinite(deviceTs) || deviceTs > now + 3_600_000) deviceTs = now
+  const ign = raw.ignition ?? raw.acc
+  const next = {
+    plate: car.plate, lat, lon, speedKmh: Math.max(0, Math.round(num('speedKmh', 'speed') ?? 0)), heading: num('heading', 'course', 'bearing'),
+    ignition: ign === undefined || ign === null ? null : ign === true || ign === 1 || ign === '1' || String(ign).toLowerCase() === 'on' || String(ign).toLowerCase() === 'true',
+    fuelPct: num('fuelPct', 'fuel'), odometerKm: num('odometerKm', 'odometer'), batteryV: num('batteryV', 'battery'), ts: now, deviceTs,
+  }
+  const prev = db.carGps.find((g) => g.plate === car.plate)
+  if (prev) Object.assign(prev, next); else db.carGps.push(next)
+  save.carGps()
+  checkReached(car.name, { lat, lon })
+  return { ok: true, car: car.name }
+}
+
+export function gpsOf(car: { plate: string }) {
+  const g = db.carGps.find((x) => x.plate === car.plate)
+  if (!g) return null
+  const age = Date.now() - g.ts
+  const state = age > GPS_OFFLINE_MS ? 'offline' : g.speedKmh > 2 ? 'moving' : 'stopped'
+  return { ...g, ts: new Date(g.ts).toISOString(), ageSec: Math.round(age / 1000), state }
 }
 
 export type Live = { lat: number; lon: number; speedKmh: number; heading: number | null; ts: string; ageSec: number; state: 'moving' | 'stopped' | 'offline'; stoppedForSec: number }

@@ -95,3 +95,17 @@ npm run lint --prefix user-app
 - **Rider auth (`user-app/`):** sign up, sign in, forgot/change password, account page and sign out. Demo-only, stored in browser localStorage. Passwords need just 4+ characters for now.
 - **Driver app (`driver-app/`) and `mock-api/`:** riders' bookings go to a local in-memory API; the driver for the chosen vehicle sees route, trip time and an Accept button, and the rider is notified on accept (polling every 2 seconds).
 - **Folder restructure:** the admin dashboard moved from the repository root to `admin-dashboard/`; `user-frontend/` is now `user-app/` and `driver-frontend/` is `driver-app/`. Ports: admin 5174, rider 5175, driver 5180, API 4000. Run commands are in README.md; the older "Running the Apps" section above is superseded.
+
+## 2026-10-13: maps, realtime, admin modules, hardening, load balancing
+- Maps moved to MapLibre + OpenFreeMap (key-free); routing OSRM, search Photon. MapLibre 6.14 (fixes a critical XSS advisory in older versions); Vite needs `optimizeDeps.exclude: ['maplibre-gl']`.
+- Added `realtime/` (Socket.io live driver tracking, access checked against the API) and `loadbalancer/` (least-connections, health checks, failover, per-ride WebSocket affinity).
+- Admin: Cars (add/edit/remove), Maintenance and Payments & invoices pages (start empty).
+- Rider app: MCCIA office quick-picks in From/To.
+- API hardening: restricted CORS via `ALLOWED_ORIGINS`, security headers, sign-in rate limit, `X-Instance` header, file-store reload for replicas, nodemailer 10.
+- Cleared ride history and live positions; sign-ins kept.
+
+## 2026-10-13: approval-based booking
+- Riders send requests (now / scheduled / multi-day, optional layover stops); no car or driver choice. Admin approves and assigns car + driver, can hold or cancel.
+- New statuses: requested, held, approved (then accepted, started, completed). Conflict checks stop a car or driver being double-booked.
+- Notifications (rider and driver pop-ups, e-mail) and 60/15 minute reminders, run from API requests. Backend files: lib/booking.ts, lib/notify.ts.
+- Backend env DATA_DIR sets where JSON data is kept.

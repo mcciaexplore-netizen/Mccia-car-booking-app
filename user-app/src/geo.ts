@@ -1,7 +1,8 @@
 // Small geography helpers shared by the map screens.
-// Geoapify (OpenStreetMap-based, good coverage of India) provides the map tiles, routing and address search.
-// Create a key at https://myprojects.geoapify.com and set VITE_GEOAPIFY_API_KEY. Without it the apps use plain OpenStreetMap.
-export const GEOAPIFY_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY as string | undefined
+// Default stack is key-free: OpenFreeMap tiles, public OSRM routing, Photon (OpenStreetMap) address search.
+// To use Geoapify instead, set VITE_GEOAPIFY_API_KEY and VITE_FREE_MAPS=false.
+const FREE_ONLY = (import.meta.env.VITE_FREE_MAPS as string | undefined) !== 'false'
+export const GEOAPIFY_KEY = FREE_ONLY ? undefined : (import.meta.env.VITE_GEOAPIFY_API_KEY as string | undefined)
 export const PUNE = { lat: 18.5204, lng: 73.8567 }
 
 export const metresBetween = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {

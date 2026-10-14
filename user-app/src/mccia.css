@@ -40,18 +40,23 @@ h1, h2, h3 { margin: 0; font-family: var(--font-display); color: var(--navy); le
 p { margin: 0; }
 
 /* Mobile app frame: full-bleed on phones, a centred phone-width column on larger screens. */
-.m-shell { position: relative; width: 100%; max-width: 460px; min-height: 100dvh; margin: 0 auto; display: flex; flex-direction: column; background: var(--bg); }
+/* The shell widens with the screen: phone column, roomy tablet column, then a full desktop layout (see app.css). */
+:root { --shell-max: 100%; }
+@media (min-width: 520px) { :root { --shell-max: 640px; --gap: 18px; } }
+@media (min-width: 900px) { :root { --shell-max: 1280px; --gap: 22px; } }
+.m-shell { position: relative; width: 100%; max-width: var(--shell-max); min-height: 100dvh; margin: 0 auto; display: flex; flex-direction: column; background: var(--bg); }
 @media (min-width: 520px) { body { background: #dfe7ee; } .m-shell { min-height: 100dvh; box-shadow: 0 0 0 1px var(--line), 0 20px 60px #26315026; } }
+@media (min-width: 900px) { body { background: var(--bg); } .m-shell { box-shadow: none; } }
 .m-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: var(--gap); height: 60px; padding: 0 var(--gap); background: var(--surface); border-bottom: 1px solid var(--line); }
 .m-brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .m-brand img { height: 26px; width: auto; display: block; }
 .m-brand span { padding-left: 10px; border-left: 1px solid var(--line); color: var(--muted); font-size: 13px; white-space: nowrap; }
 .m-main { flex: 1; display: flex; flex-direction: column; gap: var(--gap); padding: var(--gap) var(--gap) calc(84px + env(safe-area-inset-bottom)); }
-.m-tabs { position: fixed; bottom: 0; left: 50%; z-index: 30; width: 100%; max-width: 460px; transform: translateX(-50%); display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line); }
+.m-tabs { position: fixed; bottom: 0; left: 50%; z-index: 30; width: 100%; max-width: var(--shell-max); transform: translateX(-50%); display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line); }
 .m-tab { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 4px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font-size: 12px; font-weight: 500; }
 .m-tab.active { color: var(--brand); background: var(--brand-soft); }
 .m-title { display: flex; flex-direction: column; gap: 4px; padding: 4px 2px 0; }
-.m-title h1 { font-size: 26px; line-height: 1.15; }
+.m-title h1 { font-size: clamp(26px, 2.4vw + 14px, 38px); line-height: 1.15; }
 .m-title p { color: var(--muted); }
 
 /* Surfaces and controls */
@@ -125,7 +130,7 @@ p { margin: 0; }
 .loc-attr { padding: 6px 10px 2px; border-top: 1px solid var(--line); color: #9aa7b3; font-size: 11px; }
 
 /* Maps (Google Maps JavaScript API) */
-.gmap-box { position: absolute; inset: 0; z-index: 0; }
+.gmap-box { position: absolute; inset: 0; z-index: 0; background: #f6f3ee; } /* same colour as the map land, so a loading map never looks like a grey hole */
 .map-problem { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 24px; background: #e9eef3; color: var(--muted); text-align: center; font-size: 14px; }
 .map-problem strong { color: var(--navy); font-family: var(--font-display); font-size: 16px; }
 .mk { position: absolute; display: block; left: -11px; top: -11px; width: 22px; height: 22px; border: 4px solid #fff; border-radius: 50%; background: var(--navy); box-shadow: 0 1px 6px #0006; }
@@ -148,3 +153,5 @@ p { margin: 0; }
 .me-dot { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border: 3px solid #fff; border-radius: 50%; background: #1a73e8; box-shadow: 0 1px 6px #0006; }
 .me-dot i { position: absolute; inset: -3px; border-radius: 50%; background: #1a73e866; animation: me-pulse 2s ease-out infinite; }
 @keyframes me-pulse { 0% { transform: scale(1); opacity: .9; } 100% { transform: scale(3.2); opacity: 0; } }
+
+.loc-group { padding: 8px 10px 2px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }

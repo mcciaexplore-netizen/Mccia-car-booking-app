@@ -116,7 +116,7 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
       setNextIdx(r.steps.length > 1 ? 1 : 0)
       drawnFrom.current = -1
       spoken.current.clear()
-    })
+    }).catch(() => { /* aborted by a newer request */ })
     // A newer position or target replaces an in-flight request.
     return () => ctrl.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -127,7 +127,11 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
   const toNext = pos && step ? metres(pos, step.location) : 0
   useEffect(() => {
     if (!route || !pos || !step) return
-    if (nextIdx < route.steps.length - 1 && toNext < 30) setNextIdx((i) => i + 1)
+    if (nextIdx < route.steps.length - 1 && toNext < 30) { setNextIdx((i) => i + 1); return }
+    // Position along the route decides too, so a turn is never missed when GPS readings skip past its 30 m circle.
+    const here = nearestIndex(pos, route.path)
+    const upcoming = route.steps.findIndex((s) => s.fromIndex !== undefined && s.fromIndex > here)
+    if (upcoming > nextIdx) setNextIdx(upcoming)
   }, [route, pos, step, toNext, nextIdx])
 
   const remaining = route ? toNext + route.steps.slice(nextIdx).reduce((sum, s) => sum + s.distance, 0) : 0

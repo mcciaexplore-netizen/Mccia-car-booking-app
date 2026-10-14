@@ -6,9 +6,10 @@
 export type Coords = { lat: number; lon: number }
 export type Place = { id: string; label: string; detail: string; coords?: Coords; placeId?: string; kind: 'place' | 'address' }
 
-const OLA_KEY = import.meta.env.VITE_OLA_MAPS_API_KEY as string | undefined
-const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_PLACES_API_KEY as string | undefined
-const GEOAPIFY_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY as string | undefined
+const FREE_ONLY = (import.meta.env.VITE_FREE_MAPS as string | undefined) !== 'false'
+const OLA_KEY = FREE_ONLY ? undefined : import.meta.env.VITE_OLA_MAPS_API_KEY as string | undefined
+const GOOGLE_KEY = FREE_ONLY ? undefined : import.meta.env.VITE_GOOGLE_PLACES_API_KEY as string | undefined
+import { GEOAPIFY_KEY } from './geo'
 export const PROVIDER: 'ola' | 'google' | 'geoapify' | 'photon' = GEOAPIFY_KEY ? 'geoapify' : OLA_KEY ? 'ola' : GOOGLE_KEY ? 'google' : 'photon'
 export const ATTRIBUTION = { ola: 'Search by Ola Maps', google: 'Powered by Google', geoapify: 'Search by Geoapify · © OpenStreetMap', photon: 'Search by OpenStreetMap · Photon' }[PROVIDER]
 

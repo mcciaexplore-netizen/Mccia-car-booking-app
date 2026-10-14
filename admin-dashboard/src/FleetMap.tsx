@@ -6,11 +6,13 @@ import { createMap, type AdMarker, type AdShape, type LL, type MapAdapter } from
 
 type Coords = { lat: number; lon: number }
 export type Live = { lat: number; lon: number; speedKmh: number; state: 'moving' | 'stopped' | 'offline'; stoppedForSec: number; ageSec: number }
+export type CarGps = { lat: number; lon: number; speedKmh: number; state: 'moving' | 'stopped' | 'offline'; ageSec: number }
 export type MapCar = {
   name: string
   plate: string
   status: 'busy' | 'idle'
   depot: Coords
+  gps: CarGps | null
   trip: {
     id: string
     phase: string
@@ -46,11 +48,17 @@ const mins = (sec: number) => (sec < 60 ? `${Math.max(sec, 1)} s` : `${Math.roun
 type Look = { tone: 'moving' | 'stopped' | 'nosignal' | 'idle' | 'waiting'; label: string }
 function lookOf(car: MapCar): Look {
   const trip = car.status === 'busy' ? car.trip : null
+  if (trip?.phase === 'reached') return { tone: 'stopped', label: 'Reached destination' }
+  // The car's own GPS tracker is the most trustworthy source; fall back to the driver's phone.
+  const live = car.gps && car.gps.state !== 'offline' ? car.gps : trip?.live
+  if (!trip && car.gps) {
+    if (car.gps.state === 'moving') return { tone: 'moving', label: `Moving · ${car.gps.speedKmh} km/h` }
+    return car.gps.state === 'stopped' ? { tone: 'idle', label: 'Parked' } : { tone: 'nosignal', label: `No signal · ${mins(car.gps.ageSec)} ago` }
+  }
   if (!trip) return { tone: 'idle', label: 'Idle at base' }
-  const live = trip.live
   if (!live) return { tone: 'waiting', label: 'Waiting for driver GPS' }
   if (live.state === 'moving') return { tone: 'moving', label: `Moving · ${live.speedKmh} km/h` }
-  if (live.state === 'stopped') return { tone: 'stopped', label: `Stopped · ${mins(live.stoppedForSec)}` }
+  if (live.state === 'stopped') return { tone: 'stopped', label: 'stoppedForSec' in live ? `Stopped · ${mins(live.stoppedForSec)}` : 'Stopped' }
   return { tone: 'nosignal', label: `No signal · ${mins(live.ageSec)} ago` }
 }
 
@@ -58,7 +66,10 @@ const pinHtml = (name: string) => `<div class="fleet-pin-body"><span class="flee
 
 type RouteGroup = { tripId: string; shapes: AdShape[] }
 
-export default function FleetMap({ cars, filter }: { cars: MapCar[]; filter: string }) {
+export default function FleetMap({ cars, filter, selected, onSelect }: { cars: MapCar[]; filter: string; selected: string; onSelect: (name: string) => void }) {
+  const onSelectRef = useRef(onSelect)
+  onSelectRef.current = onSelect
+  const positions = useRef(new Map<string, LL>())
   const box = useRef<HTMLDivElement>(null)
   const map = useRef<MapAdapter | null>(null)
   const markers = useRef(new Map<string, AdMarker>())
@@ -111,9 +122,9 @@ export default function FleetMap({ cars, filter }: { cars: MapCar[]; filter: str
       const plans = await Promise.all(shown.map(async ({ car, index }) => {
         const trip = car.status === 'busy' ? car.trip : null
         const path = trip ? await pathFor(trip) : []
-        const live = trip?.live
-        // Real GPS wins; the simulated position along the route is only a placeholder until the driver's phone reports.
-        const position: LL = live ? { lat: live.lat, lng: live.lon } : path.length ? along(path, trip!.progress) : { lat: car.depot.lat, lng: car.depot.lon }
+        const live = car.gps && car.gps.state !== 'offline' ? car.gps : trip?.live
+        // Real GPS wins (car tracker, then driver phone); the simulated position along the route is only a placeholder.
+        const position: LL = live ? { lat: live.lat, lng: live.lon } : car.gps ? { lat: car.gps.lat, lng: car.gps.lon } : path.length ? along(path, trip!.progress) : { lat: car.depot.lat, lng: car.depot.lon }
         return { car, color: COLORS[index % COLORS.length], path, position, look: lookOf(car), trip }
       }))
       if (cancelled) return
@@ -144,7 +155,10 @@ export default function FleetMap({ cars, filter }: { cars: MapCar[]; filter: str
         if (!marker) {
           marker = m.addMarker(position, pinHtml(car.name), 'fleet-pin')
           markers.current.set(car.name, marker)
+          const name = car.name
+          marker.getElement()?.querySelector('.fleet-pin-body')?.addEventListener('click', () => onSelectRef.current(name))
         } else marker.setPosition(position)
+        positions.current.set(car.name, position)
         const el = marker.getElement()
         const dot = el?.querySelector<HTMLElement>('.fleet-pin-dot')
         const tag = el?.querySelector<HTMLElement>('.fleet-pin-tag i')
@@ -161,6 +175,17 @@ export default function FleetMap({ cars, filter }: { cars: MapCar[]; filter: str
     })()
     return () => { cancelled = true }
   }, [ready, cars, filter])
+
+  // Clicking a car zooms the map to it, then keeps it centred as its live position updates.
+  const followed = useRef('')
+  useEffect(() => {
+    const m = map.current
+    if (!ready || !m || !selected) { followed.current = ''; return }
+    const at = positions.current.get(selected)
+    if (!at) return
+    if (followed.current !== selected) { followed.current = selected; m.fitBounds([at], 80, 16) }
+    else m.panIfOutside(at)
+  }, [ready, cars, selected])
 
   return <><div ref={box} className="gmap-box" role="img" aria-label="Live map of fleet vehicles in Pune" /><LocateButton getMap={() => map.current} /></>
 }

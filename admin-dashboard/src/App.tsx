@@ -1,25 +1,29 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   AlertCircle, ArrowDownToLine, ArrowRight, CarFront, Check, ChevronRight, Clock3, LayoutDashboard, ListOrdered, LogOut,
-  Menu, Plus, Search, ShieldCheck, Trash2, IdCard, Phone, UserRound, UsersRound, X, Eye, EyeOff, Lock, Mail, KeyRound,
+  Menu, Plus, Wrench, ReceiptText, PauseCircle, Search, ShieldCheck, Trash2, IdCard, Phone, UserRound, X, Eye, EyeOff, Lock, Mail, KeyRound,
 } from 'lucide-react'
 import FleetMap from './FleetMap'
+import { ApproveModal, CancelModal, HoldModal, WalkInModal } from './RequestModals'
+import { routeText, whenLabel, type QueueRide } from './requestUtils'
+import MaintenancePage from './MaintenancePage'
+import InvoicesPage from './InvoicesPage'
 import { api, ApiError, getToken, setToken } from './api'
 
 type Coords = { lat: number; lon: number }
 type Ride = {
   id: string; status: string; riderName: string; phone: string; passengers: number; extraPassengers: number
   pickup: string; destination: string; pickupCoords: Coords | null; destinationCoords: Coords | null
+  stops: { label: string; coords: Coords | null }[]
+  tripType: 'now' | 'scheduled' | 'multiday'; startAt: string | null; endAt: string | null
+  holdNote: string; returnedNote: string; approvedAt: string | null
   driverId: string; driverName: string; vehicle: string; plate: string; tripMin: number; createdAt: string
-  phase: 'waiting' | 'to-pickup' | 'on-trip'; progress: number; etaMin: number | null
-  waitMin: number; startAt: string | null; blockedBy: 'car' | 'driver' | 'both' | 'slot' | null
-  riderEmail: string; otp: string | null; pickupTime: string | null; driverRegistered: boolean
+  phase: 'waiting' | 'assigned' | 'to-pickup' | 'on-trip' | 'reached'; reachedAt: string | null; progress: number; etaMin: number | null
+  riderEmail: string; otp: string | null; driverRegistered: boolean
   startedAt: string | null
-  allocation: { allocatedAt: string; slotStart: string; slotEnd: string } | null
-  attention: { code: string; text: string } | null
   live: { lat: number; lon: number; speedKmh: number; state: 'moving' | 'stopped' | 'offline'; stoppedForSec: number; ageSec: number } | null
 }
-type Car = { name: string; plate: string; seats: number; depot: Coords; status: 'busy' | 'idle'; freeInMin: number; trip: Ride | null; queued: number }
+type Car = { name: string; plate: string; seats: number; model: string; color: string; fuel: string; year: number | null; notes: string; gpsId: string; gps: { lat: number; lon: number; speedKmh: number; ignition: boolean | null; fuelPct: number | null; odometerKm: number | null; ts: string; ageSec: number; state: 'moving' | 'stopped' | 'offline' } | null; pickupEtaMin: number; depot: Coords; status: 'busy' | 'idle'; freeInMin: number; trip: Ride | null; queued: number }
 type DriverRow = {
   id: string; name: string; phone: string; registered: boolean; joinedAt: string | null; notes: string
   status: 'on-trip' | 'to-pickup' | 'available' | 'not-registered'
@@ -31,10 +35,11 @@ type DriverRow = {
   avgTripMin: number | null; lastActive: string | null
   recent: { id: string; rider: string; pickup: string; destination: string; vehicle: string; status: string; otp: string | null; at: string }[]
 }
-type Overview = { now: string; cars: Car[]; trips: Ride[]; queue: Ride[]; activity: Ride[]; drivers: DriverRow[] }
+type Overview = { now: string; cars: Car[]; trips: Ride[]; queue: Ride[]; upcoming: Ride[]; activity: Ride[]; drivers: DriverRow[] }
 type Driver = { id: string; name: string }
 type Admin = { id: string; name: string; email: string }
-type View = 'overview' | 'trips' | 'queue' | 'drivers'
+const viewFromHash = (): View => (window.location.hash === '#/maintenance' ? 'maintenance' : window.location.hash === '#/invoices' ? 'invoices' : 'overview')
+type View = 'overview' | 'trips' | 'queue' | 'drivers' | 'cars' | 'maintenance' | 'invoices'
 
 const initials = (name: string) => name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || '?'
 const shortPlace = (place: string) => place.split(',').slice(0, 2).join(',').trim()
@@ -48,17 +53,17 @@ const liveChip = (ride: Ride) => {
   if (l.state === 'stopped') return { tone: 'stopped', text: `Stopped · ${span(l.stoppedForSec)}` }
   return { tone: 'offline', text: `No signal · ${span(l.ageSec)} ago` }
 }
-const toLocalInput = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
-const roundUp5 = (ms: number) => Math.ceil(ms / 300_000) * 300_000
 const ACTIVITY_STATUS: Record<string, { label: string; tone: string }> = {
-  requested: { label: 'Waiting', tone: 'warn' },
+  requested: { label: 'Awaiting approval', tone: 'warn' },
+  held: { label: 'On hold', tone: 'grey' },
+  approved: { label: 'Approved', tone: '' },
   accepted: { label: 'Heading to pickup', tone: '' },
   started: { label: 'On trip', tone: 'green' },
   completed: { label: 'Completed', tone: 'green' },
   cancelled: { label: 'Cancelled', tone: 'grey' },
   declined: { label: 'Declined', tone: 'red' },
 }
-const activityGroup = (r: Ride) => (r.attention ? 'attention' : r.status === 'requested' ? 'waiting' : r.status === 'accepted' || r.status === 'started' ? 'live' : 'done')
+const activityGroup = (r: Ride) => (r.status === 'requested' || r.status === 'held' ? 'waiting' : r.status === 'approved' ? 'upcoming' : r.status === 'accepted' || r.status === 'started' ? 'live' : 'done')
 const ago = (iso: string | null) => {
   if (!iso) return 'Never'
   const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
@@ -73,7 +78,8 @@ const DRIVER_STATUS: Record<DriverRow['status'], { label: string; tone: string }
   available: { label: 'Available', tone: 'grey' },
   'not-registered': { label: 'Not signed up', tone: 'warn' },
 }
-const phaseLabel = (ride: Ride) => (ride.phase === 'to-pickup' ? 'Heading to pickup' : 'Trip in progress')
+const phaseLabel = (ride: Ride) => (ride.phase === 'to-pickup' ? 'Heading to pickup' : ride.phase === 'reached' ? 'Reached destination' : 'Trip in progress')
+const short = (r: Ride) => r.stops.length ? `+${r.stops.length} stop${r.stops.length > 1 ? 's' : ''}` : ''
 
 function AuthScreen({ onAuthed }: { onAuthed: (admin: Admin) => void }) {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin')
@@ -128,38 +134,36 @@ function AuthScreen({ onAuthed }: { onAuthed: (admin: Admin) => void }) {
 
 function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) {
   const [clock, setClock] = useState(() => new Date())
-  const [data, setData] = useState<Overview>({ now: new Date().toISOString(), cars: [], trips: [], queue: [], activity: [], drivers: [] })
+  const [data, setData] = useState<Overview>({ now: new Date().toISOString(), cars: [], trips: [], queue: [], upcoming: [], activity: [], drivers: [] })
   const [online, setOnline] = useState(true)
   const [drivers, setDrivers] = useState<Driver[]>([])
   const [queueFilter, setQueueFilter] = useState('all')
   const [mapFilter, setMapFilter] = useState('all')
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [view, setView] = useState<View>('overview')
+  const [selectedCar, setSelectedCar] = useState('') // car clicked on the map: its live details show under the map
+  const [view, setView] = useState<View>(viewFromHash)
   const [showForm, setShowForm] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
   const [toast, setToast] = useState('')
-  const [activityFilter, setActivityFilter] = useState<'all' | 'attention' | 'waiting' | 'live' | 'done'>('all')
+  const [activityFilter, setActivityFilter] = useState<'all' | 'waiting' | 'upcoming' | 'live' | 'done'>('all')
   const [activityQuery, setActivityQuery] = useState('')
   const [showAllActivity, setShowAllActivity] = useState(false)
   const [openActivity, setOpenActivity] = useState<string | null>(null)
-  const [allocating, setAllocating] = useState<Ride | null>(null)
-  const [alloc, setAlloc] = useState({ car: '', driverId: '', slot: '' })
-  const [allocError, setAllocError] = useState('')
+  const [dialog, setDialog] = useState<{ kind: 'approve' | 'hold' | 'cancel'; ride: Ride } | null>(null)
   const [newIds, setNewIds] = useState<string[]>([])
   const seenIds = useRef<Set<string> | null>(null)
   const activityRows = data.activity
   const activityCounts = {
     all: activityRows.length,
-    attention: activityRows.filter((r) => activityGroup(r) === 'attention').length,
-    waiting: activityRows.filter((r) => r.status === 'requested').length,
+    waiting: activityRows.filter((r) => activityGroup(r) === 'waiting').length,
+    upcoming: activityRows.filter((r) => activityGroup(r) === 'upcoming').length,
     live: activityRows.filter((r) => activityGroup(r) === 'live').length,
     done: activityRows.filter((r) => activityGroup(r) === 'done').length,
   }
-  const rankOf = (r: Ride) => ({ attention: 0, waiting: 1, live: 2, done: 3 })[activityGroup(r)]
+  const rankOf = (r: Ride) => ({ waiting: 0, upcoming: 1, live: 2, done: 3 })[activityGroup(r)]
   const filteredActivity = activityRows
     .filter((r) => {
-      if (activityFilter === 'attention' && activityGroup(r) !== 'attention') return false
-      if (activityFilter === 'waiting' && r.status !== 'requested') return false
+      if (activityFilter === 'waiting' && activityGroup(r) !== 'waiting') return false
+      if (activityFilter === 'upcoming' && activityGroup(r) !== 'upcoming') return false
       if (activityFilter === 'live' && activityGroup(r) !== 'live') return false
       if (activityFilter === 'done' && activityGroup(r) !== 'done') return false
       const q = activityQuery.trim().toLowerCase()
@@ -171,6 +175,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
   const [driverFilter, setDriverFilter] = useState<'all' | 'busy' | 'available' | 'not-registered'>('all')
   const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null)
   const [showDriverForm, setShowDriverForm] = useState(false)
+  const [carForm, setCarForm] = useState<'new' | Car | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   const [pw, setPw] = useState({ current: '', next: '', confirm: '' })
   const [pwError, setPwError] = useState('')
@@ -188,7 +193,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
   })
   const totalCars = cars.length
   const idleCars = cars.filter((car) => car.status === 'idle').length
-  const visibleQueue = queueFilter === 'all' ? queue : queue.filter((r) => r.vehicle === queueFilter)
+  const visibleQueue = queueFilter === 'held' ? queue.filter((r) => r.status === 'held') : queueFilter === 'new' ? queue.filter((r) => r.status === 'requested') : queue
   const today = clock.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
   const notify = useCallback((message: string) => {
@@ -250,20 +255,6 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
     notify('Booking data exported as CSV')
   }
 
-  function addRequest(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const entry = new FormData(event.currentTarget)
-    void run(async () => {
-      await post('/admin/rides', {
-        riderName: String(entry.get('name')).trim(), phone: String(entry.get('phone') ?? '').trim(),
-        pickup: String(entry.get('origin')).trim(), destination: String(entry.get('destination')).trim(),
-        car: String(entry.get('selectedCar')), driverId: String(entry.get('driverId')), passengers: Number(entry.get('passengers')) || 1,
-      })
-      setShowForm(false)
-      setView('queue')
-    }, 'Request added to the queue')
-  }
-
   function addDriver(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const entry = new FormData(event.currentTarget)
@@ -274,8 +265,28 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
     }, `${name} added. Share their phone number and password so they can sign in.`)
   }
 
+  function addCar(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const entry = new FormData(event.currentTarget)
+    const text = (k: string) => String(entry.get(k) ?? '').trim()
+    const name = text('name')
+    const editing = carForm !== null && carForm !== 'new' ? carForm : null
+    const body = { name, plate: text('plate'), seats: Number(text('seats')), model: text('model'), color: text('color'), fuel: text('fuel'), year: text('year'), pickupEtaMin: text('eta'), notes: text('notes'), gpsId: text('gpsId') }
+    void run(async () => {
+      if (editing) await api(`/admin/cars/${encodeURIComponent(editing.name)}`, { method: 'PATCH', body })
+      else await api('/admin/cars', { method: 'POST', body })
+      await refresh()
+      setCarForm(null)
+    }, editing ? `${name} updated.` : `${name} added to the fleet. Riders can book it now.`)
+  }
+
+  function deleteCar(car: Car) {
+    if (!window.confirm(`Remove ${car.name} (${car.plate}) from the fleet? Past rides stay in history.`)) return
+    void run(async () => { await api(`/admin/cars/${encodeURIComponent(car.name)}`, { method: 'DELETE' }); await refresh() }, `${car.name} removed`)
+  }
+
   function deleteDriver(driver: DriverRow) {
-    const extra = driver.queued ? ` ${driver.queued} waiting request(s) for them will be declined.` : ''
+    const extra = driver.queued ? ` ${driver.queued} approved ride(s) for them will go back to the queue.` : ''
     if (!window.confirm(`Delete ${driver.name}? Their login is removed and they disappear from the rider app. Past rides stay in history.${extra}`)) return
     void run(async () => {
       await api(`/admin/drivers/${driver.id}`, { method: 'DELETE' })
@@ -307,30 +318,21 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
     setNotesDraft(driver.notes)
   }
 
-  function openAllocate(r: Ride) {
-    const registered = driverRows.filter((d) => d.registered)
-    const driverId = registered.some((d) => d.id === r.driverId) ? r.driverId : (registered.find((d) => d.status === 'available') ?? registered[0])?.id ?? ''
-    const base = r.allocation ? new Date(r.allocation.slotStart).getTime() : Math.max(Date.now(), r.startAt ? new Date(r.startAt).getTime() : 0)
-    setAlloc({ car: r.vehicle, driverId, slot: toLocalInput(new Date(roundUp5(base))) })
-    setAllocError('')
-    setAllocating(r)
-  }
+  const afterDialog = (message: string) => { setDialog(null); setShowForm(false); notify(message); void refresh() }
 
-  async function submitAllocation(event: FormEvent) {
-    event.preventDefault()
-    if (!allocating) return
-    try {
-      await post(`/admin/rides/${allocating.id}/allocate`, { car: alloc.car, driverId: alloc.driverId, slotStart: new Date(alloc.slot).toISOString() })
-      notify(`${alloc.car} allocated to ${allocating.riderName}`)
-      setAllocating(null)
-    } catch (err) {
-      setAllocError(err instanceof Error ? err.message : 'Could not allocate')
-    }
-  }
+  // Maintenance and Payments & invoices are separate pages with their own address, so the browser back button works.
+  useEffect(() => {
+    const sync = () => setView(viewFromHash())
+    window.addEventListener('popstate', sync)
+    return () => window.removeEventListener('popstate', sync)
+  }, [])
 
   function go(next: View) {
     setView(next); setNavOpen(false)
-    const target = next === 'queue' ? 'user-activity' : next === 'trips' ? 'active-trips' : next === 'drivers' ? 'driver-activity' : null
+    const hash = next === 'maintenance' ? '#/maintenance' : next === 'invoices' ? '#/invoices' : ''
+    if (window.location.hash !== hash) window.history.pushState(null, '', hash || window.location.pathname)
+    if (next === 'maintenance' || next === 'invoices') { window.scrollTo({ top: 0 }); return }
+    const target = next === 'queue' ? 'user-activity' : next === 'trips' ? 'active-trips' : next === 'drivers' ? 'driver-activity' : next === 'cars' ? 'fleet-cars' : null
     if (target) window.setTimeout(() => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
     else window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -340,6 +342,9 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
     { id: 'trips', label: 'Live trips', icon: CarFront, count: trips.length },
     { id: 'queue', label: 'User activity', icon: ListOrdered, count: activityCounts.waiting },
     { id: 'drivers', label: 'Driver activity', icon: IdCard, count: driverRows.length },
+    { id: 'cars', label: 'Cars', icon: CarFront, count: cars.length },
+    { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+    { id: 'invoices', label: 'Payments & invoices', icon: ReceiptText },
   ]
 
   return (
@@ -361,11 +366,11 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
       <main className="main">
         <header className="topbar">
           <button type="button" className="icon-btn menu-btn" onClick={() => setNavOpen(true)} aria-label="Open menu"><Menu size={20} /></button>
-          <div className="crumbs"><span>Operations</span><ChevronRight size={14} /><strong>{view === 'overview' ? 'Overview' : view === 'trips' ? 'Live trips' : view === 'queue' ? 'User activity' : 'Driver activity'}</strong></div>
+          <div className="crumbs"><span>Operations</span><ChevronRight size={14} /><strong>{view === 'overview' ? 'Overview' : view === 'trips' ? 'Live trips' : view === 'queue' ? 'User activity' : view === 'maintenance' ? 'Maintenance' : view === 'invoices' ? 'Payments & invoices' : 'Driver activity'}</strong></div>
           <span className={`chip ${online ? 'green' : 'red'}`}><span className="dot on" /> {online ? 'LIVE' : 'OFFLINE'}</span>
         </header>
 
-        <div className="page">
+        {view === 'maintenance' ? <MaintenancePage cars={cars} notify={notify} /> : view === 'invoices' ? <InvoicesPage notify={notify} /> : <div className="page">
           <div className="page-head">
             <div><span className="eyebrow">{today} · Pune</span><h1>Fleet operations</h1><p>What is happening across the fleet right now.</p></div>
             <div className="head-actions"><button type="button" className="btn btn-ghost" onClick={exportData}><ArrowDownToLine size={16} /> Export</button><button type="button" className="btn btn-primary" onClick={() => setShowForm(true)}><Plus size={16} /> New request</button></div>
@@ -381,37 +386,53 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
             <div className="card panel map-panel">
               <div className="card-head"><div><h2>Fleet map</h2><small className="muted">Where each car is right now</small></div>
                 <span className="input select-input"><select value={mapFilter} onChange={(e) => setMapFilter(e.target.value)} aria-label="Filter vehicles"><option value="all">All vehicles</option>{cars.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select></span></div>
-              <div className="map-canvas"><FleetMap cars={cars} filter={mapFilter} /></div>
+              <div className="map-canvas"><FleetMap cars={cars} filter={mapFilter} selected={selectedCar} onSelect={setSelectedCar} /></div>
+              {(() => {
+                const sc = cars.find((c) => c.name === selectedCar)
+                if (!sc) return <small className="muted car-hint">Click a car on the map to see its live location.</small>
+                const g = sc.gps, t = sc.trip
+                const state = g ? (g.state === 'moving' ? `Moving · ${g.speedKmh} km/h` : g.state === 'stopped' ? 'Stopped' : 'Offline') : 'No GPS tracker signal'
+                return <div className="car-detail">
+                  <div className="car-detail-head"><strong>{sc.name}</strong><span className="muted">{sc.plate}</span>
+                    {t?.phase === 'reached' && <span className="chip ok">Reached</span>}
+                    <button type="button" className="icon-btn" aria-label="Close car details" onClick={() => setSelectedCar('')}><X size={16} /></button></div>
+                  <div className="car-detail-grid">
+                    <span><small>Trip</small>{t ? `${phaseLabel(t)} · ${t.riderName}` : 'No trip (available)'}</span>
+                    <span><small>Destination</small>{t ? t.destination : '—'}</span>
+                    <span><small>GPS</small>{state}</span>
+                    <span><small>Position</small>{g ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)}` : '—'}</span>
+                    <span><small>Ignition / fuel</small>{g ? `${g.ignition === null ? '—' : g.ignition ? 'On' : 'Off'}${g.fuelPct !== null ? ` · ${Math.round(g.fuelPct)}%` : ''}` : '—'}</span>
+                    <span><small>Last update</small>{g ? `${g.ageSec}s ago` : '—'}</span>
+                  </div>
+                </div>
+              })()}
               <div className="map-legend"><span><i className="swatch moving" /> {trips.filter((t) => t.live?.state === 'moving').length} moving</span><span><i className="swatch stopped" /> {trips.filter((t) => t.live?.state === 'stopped').length} stopped</span><span><i className="swatch off" /> {trips.filter((t) => !t.live || t.live.state === 'offline').length} no signal</span><span><i className="swatch idle" /> {idleCars} idle</span></div>
             </div>
 
             <aside className="card panel queue-panel">
-              <div className="card-head"><div><span className="eyebrow">Queue · {queue.length} waiting</span><h2>{idleCars === 0 && totalCars > 0 ? 'Cars are all booked' : `${idleCars} ${idleCars === 1 ? 'car is' : 'cars are'} ready`}</h2></div><span className={`status-mark ${idleCars ? 'ready' : ''}`}>{idleCars ? <Check size={18} /> : <Clock3 size={18} />}</span></div>
-              <div className="filter-chips" role="tablist" aria-label="Filter queue by car"><button type="button" className={queueFilter === 'all' ? 'on' : ''} onClick={() => setQueueFilter('all')}>All <span>{queue.length}</span></button>{cars.map((c) => <button type="button" key={c.name} className={queueFilter === c.name ? 'on' : ''} onClick={() => setQueueFilter(c.name)}>{c.name} <span>{c.queued}</span></button>)}</div>
+              <div className="card-head"><div><span className="eyebrow">Queue · {queue.length} awaiting</span><h2>{queue.length ? 'Requests to review' : 'The queue is clear'}</h2></div><span className={`status-mark ${queue.length ? '' : 'ready'}`}>{queue.length ? <Clock3 size={18} /> : <Check size={18} />}</span></div>
+              <div className="filter-chips" role="tablist" aria-label="Filter the queue">{([['all', 'All', queue.length], ['new', 'New', queue.filter((r) => r.status === 'requested').length], ['held', 'On hold', queue.filter((r) => r.status === 'held').length]] as const).map(([id, label, n]) => <button type="button" key={id} className={queueFilter === id ? 'on' : ''} onClick={() => setQueueFilter(id)}>{label} <span>{n}</span></button>)}</div>
               <div className="rider-queue">
-                {visibleQueue.length ? visibleQueue.map((r) => {
-                  const car = cars.find((c) => c.name === r.vehicle)
-                  const position = queue.filter((q) => q.vehicle === r.vehicle).findIndex((q) => q.id === r.id) + 1
-                  const open = expanded === r.id
-                  return <article className={`rq ${open ? 'open' : ''}`} key={r.id}>
-                    <button type="button" className="rq-main" onClick={() => setExpanded(open ? null : r.id)} aria-expanded={open}>
-                      <span className="rq-avatar">{initials(r.riderName)}<i>{position}</i></span>
-                      <span className="grow"><strong>{r.riderName}</strong><small>{riderCount(r)} · {r.vehicle} · {r.driverName}</small><small>{shortPlace(r.pickup)} → {shortPlace(r.destination)}</small></span>
-                      <span className="rq-eta"><b>{r.waitMin}<small> min</small></b><em>{r.waitMin === 0 ? 'car is free' : `idle ~${clockTime(r.startAt)}`}</em></span>
-                    </button>
-                    {open && <div className="rq-detail">
-                      {car?.trip ? <>
-                        <p><CarFront size={14} /> {car.name} · {car.plate} is out with <b>{car.trip.driverName}</b> carrying <b>{car.trip.riderName}</b>{car.trip.extraPassengers > 0 ? ` +${car.trip.extraPassengers}` : ''}</p>
-                        <div className="bar"><i style={{ width: `${Math.round(car.trip.progress * 100)}%` }} /></div>
-                        <p className="muted"><Clock3 size={14} /> {car.trip.etaMin} min journey left, then {car.name} is idle</p>
-                      </> : <p><Check size={14} /> {car?.name} is idle{r.blockedBy === 'driver' ? `, but ${r.driverName} is busy` : ' and can be dispatched now'}</p>}
-                      <p className="muted"><Clock3 size={14} /> Journey {r.tripMin} min · slot opens in {r.waitMin} min · ahead: {Math.max(0, position - 1)}</p>
-                      <div className="rq-actions"><span className="muted">{r.id} · {r.phone || 'no phone'}</span><button type="button" className="btn btn-danger compact" onClick={() => run(() => post(`/admin/rides/${r.id}/cancel`), `${r.riderName} removed from the queue`)}><X size={14} /> Remove</button></div>
-                    </div>}
-                  </article>
-                }) : <div className="empty"><Check size={20} />No riders waiting{queueFilter !== 'all' ? ` for ${queueFilter}` : ''}</div>}
+                {visibleQueue.length ? visibleQueue.map((r) => <article className="rq q-req" key={r.id}>
+                  <div className="q-top">
+                    <span className="rq-avatar">{initials(r.riderName)}</span>
+                    <span className="grow">
+                      <strong>{r.riderName}{r.status === 'held' && <em className="chip grey q-chip">On hold</em>}{r.returnedNote && <em className="chip warn q-chip">Re-assign</em>}</strong>
+                      <small>{riderCount(r)} · {r.phone || r.riderEmail || 'no contact'}</small>
+                    </span>
+                    <small className="q-id">{r.id}</small>
+                  </div>
+                  <div className="q-route" title={routeText(r).join(' → ')}><span className="rt-dots" aria-hidden="true"><i className="from" /><i className="line" /><i className="to" /></span><span><b>{shortPlace(r.pickup)}</b><b>{shortPlace(r.destination)}</b></span>{short(r) && <em>{short(r)}</em>}</div>
+                  <div className="q-when"><Clock3 size={13} /> {whenLabel(r)}{r.tripType === 'multiday' && <span className="chip">Multi-day</span>}</div>
+                  {(r.returnedNote || r.holdNote) && <div className="q-note">{r.returnedNote || r.holdNote}</div>}
+                  <div className="q-actions">
+                    <button type="button" className="btn btn-primary compact" onClick={() => setDialog({ kind: 'approve', ride: r })}><Check size={14} /> Approve</button>
+                    {r.status === 'requested' && <button type="button" className="btn btn-ghost compact" onClick={() => setDialog({ kind: 'hold', ride: r })}><PauseCircle size={14} /> Hold</button>}
+                    <button type="button" className="btn btn-ghost compact danger-text" onClick={() => setDialog({ kind: 'cancel', ride: r })}><X size={14} /> Cancel</button>
+                  </div>
+                </article>) : <div className="empty"><Check size={20} />{queue.length ? 'Nothing in this filter' : 'No requests waiting for approval'}</div>}
               </div>
-              <button type="button" className="link-btn add-link" onClick={() => setShowForm(true)}>Add rider to queue <ArrowRight size={15} /></button>
+              <button type="button" className="link-btn add-link" onClick={() => setShowForm(true)}>Add a booking <ArrowRight size={15} /></button>
             </aside>
           </section>
 
@@ -432,27 +453,24 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
 
           <section className="card panel" id="user-activity">
             <div className="card-head">
-              <div><h2>User activity <span className="chip warn">{activityRows.length}</span></h2><small className="muted">Every ride request: user, OTP, driver, car and time slot. New requests appear here within seconds.</small></div>
+              <div><h2>User activity <span className="chip warn">{activityRows.length}</span></h2><small className="muted">Every ride request: who asked, route, when, and the car and driver you assigned. New requests appear here within seconds.</small></div>
               <button type="button" className="btn btn-primary compact" onClick={() => setShowForm(true)}><Plus size={15} /> New request</button>
             </div>
             <div className="crm-stats act-stats">
-              {([['waiting', 'Waiting for a car', activityCounts.waiting, ''], ['attention', 'Need allocation', activityCounts.attention, activityCounts.attention ? 'alert-number' : ''], ['live', 'In progress', activityCounts.live, ''], ['done', 'Finished', activityCounts.done, '']] as const).map(([id, label, n, cls]) => <button type="button" key={id} className={`stat-tile ${activityFilter === id ? 'on' : ''}`} onClick={() => { setActivityFilter(activityFilter === id ? 'all' : id); setShowAllActivity(false) }}><small>{label}</small><strong className={cls}>{n}</strong></button>)}
+              {([['waiting', 'Awaiting approval', activityCounts.waiting, activityCounts.waiting ? 'alert-number' : ''], ['upcoming', 'Approved, not started', activityCounts.upcoming, ''], ['live', 'In progress', activityCounts.live, ''], ['done', 'Finished', activityCounts.done, '']] as const).map(([id, label, n, cls]) => <button type="button" key={id} className={`stat-tile ${activityFilter === id ? 'on' : ''}`} onClick={() => { setActivityFilter(activityFilter === id ? 'all' : id); setShowAllActivity(false) }}><small>{label}</small><strong className={cls}>{n}</strong></button>)}
             </div>
             <div className="crm-toolbar">
               <span className="input search-input"><Search size={16} /><input value={activityQuery} onChange={(e) => setActivityQuery(e.target.value)} placeholder="Search by user, phone, OTP or ride ID" aria-label="Search user activity" /></span>
               <div className="filter-chips flat" role="tablist" aria-label="Filter user activity">
-                {([['all', 'All'], ['attention', 'Need allocation'], ['waiting', 'Waiting'], ['live', 'In progress'], ['done', 'Finished']] as const).map(([id, label]) => <button type="button" key={id} className={activityFilter === id ? 'on' : ''} onClick={() => { setActivityFilter(id); setShowAllActivity(false) }}>{label} <span>{activityCounts[id]}</span></button>)}
+                {([['all', 'All'], ['waiting', 'Awaiting approval'], ['upcoming', 'Approved'], ['live', 'In progress'], ['done', 'Finished']] as const).map(([id, label]) => <button type="button" key={id} className={activityFilter === id ? 'on' : ''} onClick={() => { setActivityFilter(id); setShowAllActivity(false) }}>{label} <span>{activityCounts[id]}</span></button>)}
               </div>
             </div>
             {shownActivity.length ? <div className="act-list">
               {shownActivity.map((r) => {
                 const open = openActivity === r.id
                 const group = activityGroup(r)
-                const statusLabel = r.allocation && r.status === 'requested' ? 'Allocated' : ACTIVITY_STATUS[r.status]?.label ?? r.status
-                const slot = r.allocation
-                  ? `${clockTime(r.allocation.slotStart)} – ${clockTime(r.allocation.slotEnd)} · allocated by admin`
-                  : r.status === 'requested' ? `Est. start ${clockTime(r.startAt)}${r.pickupTime ? ` · rider asked for ${new Date(r.pickupTime).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}` : ' · as soon as possible'}`
-                    : r.startedAt ? `Started ${clockTime(r.startedAt)} · ${r.tripMin} min trip` : '—'
+                const statusLabel = ACTIVITY_STATUS[r.status]?.label ?? r.status
+                const slot = whenLabel(r)
                 return <article className={`act-card g-${group} ${open ? 'open' : ''} ${newIds.includes(r.id) ? 'is-new' : ''}`} key={r.id}>
                   <button type="button" className="act-main" aria-expanded={open} onClick={() => setOpenActivity(open ? null : r.id)}>
                     <span className="avatar">{initials(r.riderName)}</span>
@@ -461,29 +479,52 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
                       <span className="rt-dots" aria-hidden="true"><i className="from" /><i className="line" /><i className="to" /></span>
                       <span className="rt-text"><strong>{shortPlace(r.pickup)}</strong><small>{shortPlace(r.destination)}</small></span>
                     </span>
-                    <span className="act-meta"><CarFront size={14} /><span><strong>{r.driverName}</strong><small>{r.vehicle}</small></span></span>
+                    <span className="act-meta"><CarFront size={14} /><span><strong>{r.driverName || 'Not assigned'}</strong><small>{r.vehicle || 'Awaiting approval'}</small></span></span>
                     <span className="act-time"><strong>{clockTime(r.createdAt)}</strong><small title={r.id}>{ago(r.createdAt)}</small></span>
                     <span className="act-status"><span className={`chip ${ACTIVITY_STATUS[r.status]?.tone ?? 'grey'}`}>{statusLabel}</span>{r.otp && <span className="otp-chip sm" title="Ride PIN">{r.otp}</span>}</span>
                     <ChevronRight size={18} className="act-chevron" />
                   </button>
-                  {r.attention && <div className="act-alert"><AlertCircle size={15} />{r.attention.text}</div>}
+                  {(r.returnedNote || (r.status === 'held' && r.holdNote)) && <div className="act-alert"><AlertCircle size={15} />{r.returnedNote || `On hold: ${r.holdNote}`}</div>}
                   {open && <div className="act-detail">
                     <div className="det-block wide"><small>Route</small>
-                      <div className="det-route"><span className="rt-dots" aria-hidden="true"><i className="from" /><i className="line" /><i className="to" /></span><span><strong>{r.pickup}</strong><strong>{r.destination}</strong></span></div>
+                      <div className="det-route"><span className="rt-dots" aria-hidden="true"><i className="from" /><i className="line" /><i className="to" /></span><span>{routeText(r).map((p, i) => <strong key={i}>{p}</strong>)}</span></div>
                     </div>
-                    <div className="det-block"><small>Driver and car</small><strong>{r.driverName}</strong><span>{r.vehicle} · {r.plate}</span></div>
-                    <div className="det-block"><small>Time slot</small><strong>{slot}</strong>{r.status === 'requested' && r.waitMin > 0 && <span>Waiting about {r.waitMin} min</span>}</div>
+                    <div className="det-block"><small>Driver and car</small><strong>{r.driverName || 'Not assigned yet'}</strong><span>{r.vehicle ? `${r.vehicle} · ${r.plate}` : 'Approve the request to assign them'}</span></div>
+                    <div className="det-block"><small>{r.tripType === 'multiday' ? 'Dates' : 'When'}</small><strong>{slot}</strong><span>Requested {ago(r.createdAt)}</span></div>
                     <div className="det-block"><small>Rider</small><strong>{r.riderName} · {riderCount(r)}</strong>{r.phone ? <a className="phone-link" href={`tel:${r.phone}`}><Phone size={13} /> {r.phone}</a> : <span>{r.riderEmail || 'No contact'}</span>}</div>
                     <div className="det-block"><small>Ride PIN</small>{r.otp ? <span className="otp-chip">{r.otp}</span> : <span>Not active</span>}<span>{r.id}</span></div>
-                    {r.status === 'requested' && <div className="det-actions">
-                      <button type="button" className={`btn compact ${r.attention ? 'btn-primary' : 'btn-ghost'}`} onClick={() => openAllocate(r)}>{r.allocation ? 'Reallocate' : 'Allocate'}</button>
-                      <button type="button" className="btn btn-ghost compact danger-text" onClick={() => { if (window.confirm(`Cancel ${r.riderName}'s request?`)) void run(() => post(`/admin/rides/${r.id}/cancel`), `${r.riderName}'s request cancelled`) }}><X size={15} /> Cancel request</button>
+                    {['requested', 'held', 'approved'].includes(r.status) && <div className="det-actions">
+                      <button type="button" className="btn btn-primary compact" onClick={() => setDialog({ kind: 'approve', ride: r })}><Check size={14} /> {r.status === 'approved' ? 'Change car or driver' : 'Approve'}</button>
+                      {r.status === 'requested' && <button type="button" className="btn btn-ghost compact" onClick={() => setDialog({ kind: 'hold', ride: r })}><PauseCircle size={14} /> Hold</button>}
+                      <button type="button" className="btn btn-ghost compact danger-text" onClick={() => setDialog({ kind: 'cancel', ride: r })}><X size={15} /> Cancel</button>
                     </div>}
                   </div>}
                 </article>
               })}
               {filteredActivity.length > 10 && <button type="button" className="show-more" onClick={() => setShowAllActivity((v) => !v)}>{showAllActivity ? 'Show fewer' : `Show all ${filteredActivity.length}`}</button>}
             </div> : <div className="empty"><Check size={22} />{activityRows.length ? 'No requests match your filters.' : 'No ride requests yet. They show up here the moment a rider books.'}</div>}
+          </section>
+
+          <section className="card panel" id="fleet-cars">
+            <div className="card-head">
+              <div><h2>Cars <span className="chip">{cars.length}</span></h2><small className="muted">The fleet riders can book</small></div>
+              <button type="button" className="btn btn-primary compact" onClick={() => setCarForm('new')}><Plus size={15} /> Add car</button>
+            </div>
+            <div className="table">
+              <div className="trow carrow thead"><span>Car</span><span>Number</span><span>Seats</span><span>Details</span><span>Status</span><span>GPS</span><span /></div>
+              {cars.map((c) => <div className="trow carrow clickable" key={c.name} title="Click to edit" onClick={() => setCarForm(c)}>
+                <span className="cell"><span className="avatar sm"><CarFront size={14} /></span><span className="grow"><strong>{c.name}</strong><small>{c.model || '—'}</small></span></span>
+                <span className="cell">{c.plate}</span>
+                <span className="cell">{c.seats} seats</span>
+                <span className="cell muted">{[c.color, c.fuel, c.year].filter(Boolean).join(' · ') || '—'}</span>
+                <span className="cell"><span className={`chip ${c.status === 'idle' ? 'ok' : ''}`}>{c.status === 'idle' ? 'Available' : 'On a trip'}</span></span>
+                <span className="cell">{c.gps
+                  ? <span className="grow"><span className={`chip ${c.gps.state === 'offline' ? '' : 'ok'}`}>{c.gps.state === 'moving' ? `Moving ${c.gps.speedKmh} km/h` : c.gps.state === 'stopped' ? 'Stopped' : 'Offline'}</span>
+                    <small>{c.gps.lat.toFixed(4)}, {c.gps.lon.toFixed(4)}{c.gps.fuelPct !== null ? ` · fuel ${Math.round(c.gps.fuelPct)}%` : ''}{c.gps.odometerKm !== null ? ` · ${Math.round(c.gps.odometerKm)} km` : ''} · {c.gps.ageSec < 90 ? `${c.gps.ageSec}s ago` : new Date(c.gps.ts).toLocaleString()}</small></span>
+                  : <span className="muted">{c.gpsId ? 'Waiting for signal' : 'No tracker'}</span>}</span>
+                <span className="cell"><button type="button" className="icon-btn" aria-label={`Remove ${c.name}`} onClick={(e) => { e.stopPropagation(); deleteCar(c) }}><Trash2 size={16} /></button></span>
+              </div>)}
+            </div>
           </section>
 
           <section className="card panel" id="driver-activity">
@@ -520,51 +561,13 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
           </section>
 
           <footer className="page-foot"><span className="dot on" /> Fleet synced · MCCIA Cabs admin</footer>
-        </div>
+        </div>}
       </main>
 
-      {showForm && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowForm(false) }}>
-        <section className="modal card" role="dialog" aria-modal="true" aria-labelledby="request-title">
-          <div className="card-head"><div><span className="eyebrow">New booking</span><h2 id="request-title">Add a rider request</h2></div><button type="button" className="icon-btn" aria-label="Close" onClick={() => setShowForm(false)}><X size={18} /></button></div>
-          <p className="muted">{idleCars === 0 ? 'All cars are on trips. This rider will join the queue.' : 'A car is idle and can be dispatched right away.'}</p>
-          <form className="stack" onSubmit={addRequest}>
-            <label className="field"><span>Rider name</span><span className="input"><input name="name" placeholder="Full name" required /></span></label>
-            <label className="field"><span>Phone</span><span className="input"><input name="phone" type="tel" placeholder="+91 98765 43210" /></span></label>
-            <label className="field"><span>Pickup location</span><span className="input"><input name="origin" placeholder="Where should we pick them up?" required /></span></label>
-            <label className="field"><span>Destination</span><span className="input"><input name="destination" placeholder="Where are they going?" required /></span></label>
-            <div className="form-grid">
-              <label className="field"><span>Car</span><span className="input"><select name="selectedCar" defaultValue={cars[0]?.name} required>{cars.map((c) => <option key={c.name} value={c.name}>{c.name} · {c.status === 'busy' ? `idle in ${c.freeInMin} min` : 'Idle'}</option>)}</select></span></label>
-              <label className="field"><span>Driver</span><span className="input"><select name="driverId" required>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></span></label>
-              <label className="field"><span>Passengers</span><span className="input"><input name="passengers" type="number" min="1" max="6" defaultValue="1" required /></span></label>
-            </div>
-            <div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={() => setShowForm(false)}>Cancel</button><button type="submit" className="btn btn-primary"><UsersRound size={16} /> Add to {idleCars === 0 ? 'queue' : 'dispatch'}</button></div>
-          </form>
-        </section>
-      </div>}
-      {allocating && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setAllocating(null) }}>
-        <section className="modal card" role="dialog" aria-modal="true" aria-labelledby="alloc-title">
-          <div className="card-head"><div><span className="eyebrow">{allocating.id}</span><h2 id="alloc-title">{allocating.allocation ? 'Reallocate' : 'Allocate'} car and time slot</h2></div><button type="button" className="icon-btn" aria-label="Close" onClick={() => setAllocating(null)}><X size={18} /></button></div>
-          <div className="alloc-summary">
-            <span className="avatar sm">{initials(allocating.riderName)}</span>
-            <span className="grow"><strong>{allocating.riderName} · {riderCount(allocating)}</strong><small>{shortPlace(allocating.pickup)} → {shortPlace(allocating.destination)} · {allocating.tripMin} min trip</small></span>
-            <span className="muted">Asked for {allocating.vehicle} with {allocating.driverName}</span>
-          </div>
-          {allocating.attention && <div className="alert warn"><Clock3 size={16} /> {allocating.attention.text}. Choose another car, driver or time.</div>}
-          <form className="stack" onSubmit={submitAllocation}>
-            <div className="form-grid two">
-              <label className="field"><span>Car</span><span className="input"><select value={alloc.car} onChange={(e) => setAlloc((a) => ({ ...a, car: e.target.value }))} required>{cars.map((c) => <option key={c.name} value={c.name}>{c.name} · {c.status === 'busy' ? `on a trip, back in ${c.freeInMin} min` : 'idle'}</option>)}</select></span></label>
-              <label className="field"><span>Driver</span><span className="input"><select value={alloc.driverId} onChange={(e) => setAlloc((a) => ({ ...a, driverId: e.target.value }))} required>{driverRows.filter((d) => d.registered).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></span></label>
-            </div>
-            <div className="field"><span>Time slot starts</span>
-              <div className="slot-quick">{[['Now', 0], ['In 15 min', 15], ['In 30 min', 30], ['In 1 hour', 60]].map(([label, mins]) => <button type="button" key={label} className="chip-btn" onClick={() => setAlloc((a) => ({ ...a, slot: toLocalInput(new Date(Date.now() + Number(mins) * 60_000)) }))}>{label}</button>)}</div>
-              <span className="input"><input type="datetime-local" value={alloc.slot} onChange={(e) => setAlloc((a) => ({ ...a, slot: e.target.value }))} required /></span>
-              {alloc.slot && <small className="muted">Slot runs about {clockTime(new Date(alloc.slot).toISOString())} to {clockTime(new Date(new Date(alloc.slot).getTime() + (10 + allocating.tripMin) * 60_000).toISOString())} (10 min pickup + {allocating.tripMin} min trip).</small>}
-            </div>
-            {allocError && <div className="alert error" role="alert">{allocError}</div>}
-            <div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={() => setAllocating(null)}>Cancel</button><button type="submit" className="btn btn-primary"><Check size={16} /> Confirm allocation</button></div>
-          </form>
-        </section>
-      </div>}
+      {showForm && <WalkInModal cars={cars} drivers={drivers.map((d) => ({ ...d, registered: driverRows.some((r) => r.id === d.id && r.registered) }))} onClose={() => setShowForm(false)} onDone={afterDialog} />}
+      {dialog?.kind === 'approve' && <ApproveModal ride={dialog.ride as QueueRide} cars={cars} drivers={driverRows.map((d) => ({ id: d.id, name: d.name, registered: d.registered }))} onClose={() => setDialog(null)} onDone={afterDialog} />}
+      {dialog?.kind === 'hold' && <HoldModal ride={dialog.ride as QueueRide} onClose={() => setDialog(null)} onDone={afterDialog} />}
+      {dialog?.kind === 'cancel' && <CancelModal ride={dialog.ride as QueueRide} onClose={() => setDialog(null)} onDone={afterDialog} />}
 
       {showPassword && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowPassword(false) }}>
         <section className="modal card" role="dialog" aria-modal="true" aria-labelledby="pw-title">
@@ -575,6 +578,26 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
             <label className="field"><span>Confirm new password</span><span className="input"><Lock size={16} /><input type="password" value={pw.confirm} onChange={(e) => setPw((p) => ({ ...p, confirm: e.target.value }))} autoComplete="new-password" minLength={6} required /></span></label>
             {pwError && <div className="alert error" role="alert">{pwError}</div>}
             <div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={() => setShowPassword(false)}>Cancel</button><button type="submit" className="btn btn-primary"><Check size={16} /> Change password</button></div>
+          </form>
+        </section>
+      </div>}
+
+      {carForm && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setCarForm(null) }}>
+        <section className="modal card" role="dialog" aria-modal="true" aria-labelledby="car-form-title">
+          <div className="card-head"><div><span className="eyebrow">{carForm === 'new' ? 'New car' : carForm.plate}</span><h2 id="car-form-title">{carForm === 'new' ? 'Add a car' : `Edit ${carForm.name}`}</h2></div><button type="button" className="icon-btn" aria-label="Close" onClick={() => setCarForm(null)}><X size={18} /></button></div>
+          <p className="muted">The car shows up in the rider app and on the fleet map once added.</p>
+          <form className="stack" onSubmit={addCar} key={carForm === 'new' ? 'new' : carForm.name}>
+            <label className="field"><span>Car name</span><span className="input"><CarFront size={16} /><input name="name" placeholder="e.g. Swift Dzire" defaultValue={carForm === 'new' ? '' : carForm.name} required /></span></label>
+            <label className="field"><span>Car number</span><span className="input"><input name="plate" placeholder="MH 12 EF 1003" defaultValue={carForm === 'new' ? '' : carForm.plate} required /></span></label>
+            <label className="field"><span>Passenger seats</span><span className="input"><input name="seats" type="number" min={1} max={20} defaultValue={carForm === 'new' ? 4 : carForm.seats} required /></span></label>
+            <label className="field"><span>Model (optional)</span><span className="input"><input name="model" placeholder="e.g. Toyota Innova Crysta" defaultValue={carForm === 'new' ? '' : carForm.model} /></span></label>
+            <label className="field"><span>Colour (optional)</span><span className="input"><input name="color" placeholder="White" defaultValue={carForm === 'new' ? '' : carForm.color} /></span></label>
+            <label className="field"><span>Fuel (optional)</span><span className="input"><select name="fuel" defaultValue={carForm === 'new' ? '' : carForm.fuel}><option value="">Not set</option><option>Petrol</option><option>Diesel</option><option>CNG</option><option>Electric</option></select></span></label>
+            <label className="field"><span>Year (optional)</span><span className="input"><input name="year" type="number" min={1990} max={2100} placeholder="2023" defaultValue={carForm === 'new' ? '' : carForm.year ?? ''} /></span></label>
+            <label className="field"><span>Typical pickup time in minutes (optional)</span><span className="input"><input name="eta" type="number" min={1} max={180} placeholder="20" defaultValue={carForm === 'new' ? '' : carForm.pickupEtaMin} /></span></label>
+            <label className="field"><span>GPS tracker ID (optional)</span><span className="input"><input name="gpsId" placeholder="Device ID / IMEI from the car's GPS unit" defaultValue={carForm === 'new' ? '' : carForm.gpsId} /></span></label>
+            <label className="field"><span>Notes (optional)</span><span className="input"><input name="notes" placeholder="Insurance, permit, service dates..." defaultValue={carForm === 'new' ? '' : carForm.notes} /></span></label>
+            <div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={() => setCarForm(null)}>Cancel</button><button type="submit" className="btn btn-primary">{carForm === 'new' ? <><Plus size={16} /> Add car</> : <><Check size={16} /> Save changes</>}</button></div>
           </form>
         </section>
       </div>}

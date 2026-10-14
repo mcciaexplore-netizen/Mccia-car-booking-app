@@ -1,0 +1,51 @@
+# Production-style stack: nginx load balancer -> 2 API replicas, 2 realtime replicas, 3 web apps.
+#   docker compose up --build        then open http://admin.localhost  http://app.localhost  http://driver.localhost
+# Put secrets in a .env file next to this one (see deploy/.env.example). With DATABASE_URL set (Postgres on Neon) the API
+# replicas share state safely; without it they share the ./data volume, which is fine for a demo but can race on writes.
+x-api: &api
+  build: ./backend
+  restart: unless-stopped
+  environment: &api-env
+    AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in .env}
+    DATABASE_URL: ${DATABASE_URL:-}
+    ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://admin.localhost,http://app.localhost,http://driver.localhost}
+    SMTP_HOST: ${SMTP_HOST:-}
+    SMTP_PORT: ${SMTP_PORT:-465}
+    SMTP_USER: ${SMTP_USER:-}
+    SMTP_PASS: ${SMTP_PASS:-}
+    SMTP_FROM: ${SMTP_FROM:-}
+  volumes: [ "api-data:/app/data" ]
+
+x-realtime: &realtime
+  build: ./realtime
+  restart: unless-stopped
+  environment:
+    API_URL: http://api1:4000/api
+    CORS_ORIGIN: ${ALLOWED_ORIGINS:-http://admin.localhost,http://app.localhost,http://driver.localhost}
+
+x-web: &web
+  restart: unless-stopped
+  build: &web-build
+    context: .
+    dockerfile: deploy/Dockerfile.web
+    args: &web-args
+      VITE_API_URL: ${PUBLIC_API_URL:-http://api.localhost/api}
+      VITE_REALTIME_URL: ${PUBLIC_REALTIME_URL:-http://api.localhost}
+
+services:
+  api1: { <<: *api, environment: { <<: *api-env, INSTANCE_ID: api1 } }
+  api2: { <<: *api, environment: { <<: *api-env, INSTANCE_ID: api2 } }
+  realtime1: *realtime
+  realtime2: *realtime
+  admin:  { <<: *web, build: { <<: *web-build, args: { <<: *web-args, APP: admin-dashboard } } }
+  rider:  { <<: *web, build: { <<: *web-build, args: { <<: *web-args, APP: user-app } } }
+  driver: { <<: *web, build: { <<: *web-build, args: { <<: *web-args, APP: driver-app } } }
+  lb:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports: [ "80:80" ]
+    volumes: [ "./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro" ]
+    depends_on: [ api1, api2, realtime1, realtime2, admin, rider, driver ]
+
+volumes:
+  api-data:

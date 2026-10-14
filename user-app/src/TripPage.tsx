@@ -1,21 +1,11 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Check, Clock3, KeyRound, Mail, MapPin, Navigation, Phone, X } from 'lucide-react'
+import { ArrowLeft, Check, Hourglass, KeyRound, Phone, X } from 'lucide-react'
 import type { User } from './auth'
 import MapView from './MapView'
-import type { Coords } from './places'
+import { useLiveDriver } from './useLiveDriver'
 import { api, ApiError } from './api'
-
-type Ride = {
-  id: string; riderName: string; pickup: string; destination: string; passengers: number
-  driverName: string; driverPhone: string; vehicle: string; plate: string
-  otp: string; otpDelivery: 'pending' | 'sent' | 'failed' | 'not-configured'; emailMasked: string; tripMin: number; pickupEtaMin: number
-  status: 'requested' | 'accepted' | 'started' | 'cancelled' | 'declined' | 'completed'
-  slot: { startAt: string; endAt: string; position: number; waitMin: number; ready: boolean; blockedBy: 'car' | 'driver' | 'both' | 'slot' | null } | null
-  allocation?: { slotStart: string; slotEnd: string }
-  arrivalMin: number | null; acceptedAt: string | null; startedAt: string | null
-  pickupCoords: Coords | null; destinationCoords: Coords | null
-  driverLive: { lat: number; lon: number; speedKmh: number; state: 'moving' | 'stopped' | 'offline'; stoppedForSec: number; ageSec: number } | null
-}
+import AllocationTable, { type Row } from './AllocationTable'
+import { canCancel, routeText, telHref, whenLabel, whenText, type Ride } from './rides'
 
 function LiveStatus({ live }: { live: Ride['driverLive'] }) {
   if (!live) return <span className="live-line none"><i />Waiting for your driver's location…</span>
@@ -24,12 +14,17 @@ function LiveStatus({ live }: { live: Ride['driverLive'] }) {
   return <span className="live-line none"><i />Lost the driver's location · last seen {Math.max(1, Math.round(live.ageSec / 60))} min ago</span>
 }
 
-const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-
 export default function TripPage({ rideId, user, onDone }: { rideId: string; user: User; onDone: () => void }) {
   const [ride, setRide] = useState<Ride | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [error, setError] = useState('')
+  const [cancelError, setCancelError] = useState('')
+  const tracking = ride?.status === 'accepted' || ride?.status === 'started'
+  const socketFix = useLiveDriver(rideId, tracking)
+  // Prefer the WebSocket fix while it is fresh; the polled position is the fallback.
+  const live = socketFix && now - socketFix.ts < 15_000
+    ? { lat: socketFix.lat, lon: socketFix.lon, state: (socketFix.speed ?? 0) > 1.2 ? ('moving' as const) : ('stopped' as const) }
+    : ride?.driverLive
 
   useEffect(() => {
     let alive = true
@@ -48,66 +43,92 @@ export default function TripPage({ rideId, user, onDone }: { rideId: string; use
     return () => { alive = false; clearInterval(poll); clearInterval(tick) }
   }, [rideId, onDone])
 
+  async function cancel() {
+    if (!window.confirm('Cancel this request?')) return
+    try { await api(`/rides/${rideId}/cancel`, { method: 'POST', body: {} }); setCancelError(''); onDone() }
+    catch (e) { setCancelError(e instanceof ApiError ? e.message : 'Could not cancel.') }
+  }
+
   if (!ride) return <main className="m-shell"><div className="empty">{error || 'Loading your ride…'}</div></main>
 
   const arriveAt = ride.acceptedAt && ride.arrivalMin ? new Date(ride.acceptedAt).getTime() + ride.arrivalMin * 60_000 : 0
   const minsLeft = arriveAt ? Math.max(0, Math.ceil((arriveAt - now) / 60_000)) : 0
   const progress = arriveAt && ride.arrivalMin ? Math.min(100, Math.max(4, 100 - ((arriveAt - now) / (ride.arrivalMin * 60_000)) * 100)) : 0
-  const initials = ride.driverName.split(' ').map((p) => p[0]).join('').slice(0, 2)
   const firstName = ride.driverName.split(' ')[0]
-  const scheduled = ride.status === 'requested' ? ride.allocation ?? null : null
   const closed = ['cancelled', 'declined', 'completed'].includes(ride.status)
+  const assigned = ['approved', 'accepted', 'started'].includes(ride.status)
 
-  const heading = {
-    requested: scheduled
-      ? ['Your cab is scheduled', `${ride.vehicle} with ${ride.driverName} · ${time(scheduled.slotStart)} to ${time(scheduled.slotEnd)}`]
-      : ['Request received', `We are confirming your ${ride.vehicle} with ${firstName}`],
-    accepted: [minsLeft <= 1 ? 'Your driver is arriving' : `Arriving in ${minsLeft} min`, `${firstName} accepted your ride`],
-    started: ['Enjoy your ride', `About ${ride.tripMin} min to your destination`],
-    cancelled: ['Ride cancelled', 'You can book another cab anytime'],
-    declined: [`${firstName} cannot take this ride`, 'Your request was cancelled. You can book again or pick another driver.'],
+  const heading: Record<Ride['status'], [string, string]> = {
+    requested: ['Waiting for approval', 'An MCCIA admin will review your request. You will be notified when it is approved.'],
+    held: ['On hold', ride.holdNote || 'Your request is on hold. We will update you soon.'],
+    approved: ['Approved', `${ride.vehicle} with ${ride.driverName} is assigned to you`],
+    accepted: [minsLeft <= 1 ? 'Your driver is arriving' : `Arriving in ${minsLeft} min`, `${firstName} is on the way`],
+    started: ['Trip in progress', `About ${ride.tripMin} min to your destination`],
+    cancelled: ['Request cancelled', ride.cancelReason || 'You can send another request anytime'],
+    declined: ['Request declined', ride.cancelReason || 'Your request could not be accepted. You can send another one.'],
     completed: ['Trip completed', 'Thanks for riding with MCCIA Cabs'],
-  }[ride.status]
+  }
+  const [title, sub] = heading[ride.status]
+
+  const route: Row = ['Route', <ol className="route-list" key="route">{routeText(ride).map((p, i) => <li key={i}>{p}</li>)}</ol>]
+  const rows: Row[] = [
+    ['Booking', ride.id],
+    ['Passenger', ride.riderName || user.name],
+    route,
+    [whenLabel(ride), whenText(ride)],
+  ]
+  if (assigned) {
+    rows.push(['Car', ride.vehicle], ['Car number', ride.plate])
+    if (ride.carSeats) rows.push(['Seats', String(ride.carSeats)])
+    rows.push(['Driver', ride.driverName])
+    if (ride.driverPhone) rows.push(['Driver phone', <a key="tel" className="tel-link" href={telHref(ride.driverPhone)}><Phone size={14} /> {ride.driverPhone}</a>])
+    if (ride.otp) rows.push(['Ride PIN', ride.otp])
+  } else {
+    rows.push(['Passengers', String(ride.passengers)])
+  }
+
+  const header = (
+    <>
+      <button className="trip-back" onClick={onDone} aria-label="Back" type="button"><ArrowLeft size={18} /></button>
+      <span className="trip-user">{user.name.split(' ')[0]}</span>
+    </>
+  )
 
   return (
-    <main className="m-shell trip">
-      <div className="trip-map">
-        <MapView pickup={ride.pickupCoords} destination={ride.destinationCoords} status={ride.status}
-          live={ride.driverLive} arrivalProgress={progress / 100} tripProgress={ride.startedAt ? (now - new Date(ride.startedAt).getTime()) / (ride.tripMin * 60_000) : 0} />
-        <button className="trip-back" onClick={onDone} aria-label="Back" type="button"><ArrowLeft size={18} /></button>
-        <span className="trip-user">{user.name.split(' ')[0]}</span>
-      </div>
+    <main className={`m-shell trip ${tracking ? '' : 'no-map'}`}>
+      {tracking
+        ? <div className="trip-map">
+          <MapView pickup={ride.pickupCoords} destination={ride.destinationCoords} status={ride.status}
+            live={live} arrivalProgress={progress / 100} tripProgress={ride.startedAt ? (now - new Date(ride.startedAt).getTime()) / (ride.tripMin * 60_000) : 0} />
+          {header}
+        </div>
+        : <div className="trip-bar">{header}</div>}
 
       <div className="m-main trip-body" role="status" aria-live="polite">
-        {!(ride.status === 'requested' && !scheduled) && <div className="card">
-          <div className="card-head"><div className="m-title"><h1>{heading[0]}</h1><p>{heading[1]}</p></div>{ride.status === 'accepted' && <span className="eta-badge"><strong>{minsLeft}</strong><small>min</small></span>}</div>
-          {(ride.status === 'accepted' || ride.status === 'started') && <LiveStatus live={ride.driverLive} />}
+        <div className="card">
+          <div className="card-head"><div className="m-title"><h1>{title}</h1><p>{sub}</p></div>
+            {ride.status === 'accepted' && <span className="eta-badge"><strong>{minsLeft}</strong><small>min</small></span>}
+            {(ride.status === 'requested' || ride.status === 'held') && <span className="wait-badge" aria-hidden="true"><Hourglass size={22} /></span>}</div>
+          {tracking && <LiveStatus live={ride.driverLive} />}
           {ride.status === 'accepted' && <div className="bar"><i style={{ width: `${progress}%` }} /></div>}
-          {scheduled && <div className="facts">
-            <div><small>Time slot</small><strong>{time(scheduled.slotStart)} – {time(scheduled.slotEnd)}</strong></div>
-            <div><small>Car</small><strong>{ride.vehicle} · {ride.plate}</strong></div>
-            <div><small>Driver</small><strong>{ride.driverName}</strong></div>
-            <div><small>Status</small><strong>Confirmed by MCCIA</strong></div>
-          </div>}
-          {ride.status === 'declined' && <div className="alert error"><X size={16} /> {ride.driverName} cannot take this ride, so it was cancelled.</div>}
+          {ride.status === 'requested' && <div className="bar searching"><i /></div>}
+          {ride.status === 'declined' && <div className="alert error"><X size={16} /> This request was declined.</div>}
           {ride.status === 'started' && <div className="alert ok"><Check size={16} /> Trip started. PIN verified by your driver.</div>}
-        </div>}
+        </div>
 
-        {(ride.status === 'accepted' || ride.status === 'started') && <div className="card"><div className="row"><span className="avatar">{initials}</span><div className="grow"><strong>{ride.driverName}</strong><small>{ride.vehicle} · {ride.plate}</small></div><a className="call-btn" href={`tel:${ride.driverPhone.replace(/[^+\d]/g, '')}`} aria-label={`Call ${ride.driverName}`}><Phone size={18} /></a></div></div>}
-
-        {!closed && <div className="card pin-card" aria-label="Ride PIN">
+        {ride.otp && !closed && <div className="card pin-card" aria-label="Ride PIN">
           <div className="row"><KeyRound size={16} /><span className="eyebrow">Your ride PIN</span></div>
           <div className="pin-digits" aria-label={`PIN ${ride.otp.split('').join(' ')}`}>{ride.otp.split('').map((d, i) => <span key={i}>{d}</span>)}</div>
-          <p className="hint">{ride.status === 'started' ? 'PIN verified. Your trip has started.' : <>Tell this 4-digit PIN to <strong>{ride.driverName}</strong> when they arrive.</>}</p>
-          <div className="row hint"><Mail size={14} /><span>{ride.otpDelivery === 'sent' ? `Also emailed to ${ride.emailMasked}.` : ride.otpDelivery === 'failed' ? 'Email could not be sent. Use the PIN shown here.' : ride.otpDelivery === 'pending' ? 'Sending the PIN to your email…' : 'Email is not set up, so the PIN is shown here only.'}</span></div>
+          <p className="hint">{ride.status === 'started' ? 'PIN verified. Your trip has started.' : <>Tell this PIN to <strong>{ride.driverName}</strong> when they arrive.</>}</p>
         </div>}
 
         <div className="card">
-          <div className="route-stop"><span className="rdot a"><MapPin size={13} /></span><div><small>Pickup</small><strong>{ride.pickup}</strong></div></div>
-          <div className="route-stop"><span className="rdot b"><Navigation size={13} /></span><div><small>Drop-off</small><strong>{ride.destination}</strong></div></div>
-          <div className="meta-line"><span><Clock3 size={14} /> {ride.tripMin} min trip</span><span>{ride.passengers} passenger{ride.passengers > 1 ? 's' : ''}</span><span>{ride.id}</span></div>
+          <div className="card-head"><h2>{assigned ? 'Your allocation' : 'Request summary'}</h2>{assigned && ride.driverPhone && <a className="call-btn" href={telHref(ride.driverPhone)} aria-label={`Call ${ride.driverName}`}><Phone size={18} /></a>}</div>
+          <AllocationTable rows={rows} label={assigned ? 'Your allocation' : 'Request summary'} />
         </div>
 
+        {cancelError && <div className="alert error" role="alert">{cancelError}</div>}
+        {canCancel(ride) && <button type="button" className="btn btn-danger" onClick={cancel}>Cancel request</button>}
         {(closed || ride.status === 'started') && <button type="button" className="btn btn-primary" onClick={onDone}>{ride.status === 'started' ? 'Done' : 'Book another ride'}</button>}
       </div>
     </main>

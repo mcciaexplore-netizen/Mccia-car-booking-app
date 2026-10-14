@@ -3,13 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "install:all": "npm install --prefix admin-dashboard && npm install --prefix user-app && npm install --prefix driver-app && npm install --prefix backend",
+    "install:all": "npm install --prefix admin-dashboard && npm install --prefix user-app && npm install --prefix driver-app && npm install --prefix backend && npm install --prefix realtime",
     "dev:api": "npm --prefix backend run dev",
+    "dev:realtime": "npm --prefix realtime run dev",
+    "dev:lb": "npm --prefix loadbalancer start",
+    "cluster": "node scripts/cluster.mjs",
     "dev:admin": "npm --prefix admin-dashboard run dev",
     "dev:user": "npm --prefix user-app run dev",
     "dev:driver": "npm --prefix driver-app run dev",
     "build": "npm --prefix backend run build && npm --prefix admin-dashboard run build && npm --prefix user-app run build && npm --prefix driver-app run build",
-    "lint": "npm --prefix admin-dashboard run lint && npm --prefix user-app run lint && npm --prefix driver-app run lint"
+    "lint": "npm --prefix admin-dashboard run lint && npm --prefix user-app run lint && npm --prefix driver-app run lint",
+    "build:api": "npm --prefix backend run build"
   }
 }
-

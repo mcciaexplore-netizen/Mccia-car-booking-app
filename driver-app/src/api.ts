@@ -1,15 +1,21 @@
 export const API = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/[/]+$/, '') ?? `http://${window.location.hostname}:4000/api`
 
 export type Driver = { id: string; name: string; phone: string }
+export type Coords = { lat: number; lon: number }
+export type Stop = { label: string; coords: Coords | null }
 export type Ride = {
   id: string; riderName: string; phone: string; pickup: string; destination: string
-  pickupCoords: { lat: number; lon: number } | null; destinationCoords: { lat: number; lon: number } | null
-  passengers: number; pickupTime: string; vehicle: string; plate: string; driverId: string
-  pickupEtaMin: number; tripMin: number; arrivalMin: number | null
-  status: 'requested' | 'accepted' | 'started' | 'cancelled' | 'declined' | 'completed'
-  slot: { startAt: string; endAt: string; position: number; waitMin: number; ready: boolean; blockedBy: 'car' | 'driver' | 'both' | 'slot' | null } | null
-  allocation?: { slotStart: string; slotEnd: string }
-  createdAt: string; acceptedAt: string | null; startedAt: string | null; completedAt?: string | null
+  pickupCoords: Coords | null; destinationCoords: Coords | null
+  stops: Stop[]; tripType: 'now' | 'scheduled' | 'multiday'; startAt: string | null; endAt: string | null
+  passengers: number; tripMin: number; vehicle: string; plate: string; driverId: string; driverName?: string
+  arrivalMin: number | null
+  status: 'approved' | 'accepted' | 'started' | 'completed' | 'cancelled' | 'declined'
+  window: { start: string; end: string }; canStart: boolean
+  createdAt?: string; approvedAt: string | null; acceptedAt: string | null; startedAt: string | null; completedAt?: string | null
+}
+export type Notice = {
+  id: string; rideId: string; kind: 'assigned' | 'reminder' | 'cancelled'; title: string; message: string
+  createdAt: string; read: boolean; data?: { rows?: [string, string][]; phone?: string; rider?: string }
 }
 
 const TOKEN_KEY = 'mccia.driverToken'
