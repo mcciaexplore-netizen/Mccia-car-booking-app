@@ -69,3 +69,9 @@ serve everything over https. Known gap: `npm audit` still reports a postcss advi
 - Trip times and vehicle wait times are illustrative estimates. No live maps, GPS, real-time dispatch or Google Sheets.
 
 See [PROJECT_HISTORY.md](PROJECT_HISTORY.md) for details.
+
+## Deploying to Vercel (four projects, one repo)
+Create four Vercel projects from this repo, each with a different Root Directory:
+- `backend` (Next.js API) - env: `DATABASE_URL` (Neon Postgres), `AUTH_SECRET`, `ALLOWED_ORIGINS` (the three app URLs, comma separated), optional `SMTP_*`.
+- `admin-dashboard`, `user-app`, `driver-app` (Vite) - env: `VITE_API_URL` = `https://<backend-url>/api`.
+The `realtime` socket server needs a long-lived host (Docker/Render/Fly), not Vercel; set `VITE_REALTIME_URL` on user-app/driver-app to its URL.
