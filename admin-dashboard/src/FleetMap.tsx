@@ -58,7 +58,7 @@ function lookOf(car: MapCar): Look {
   if (!trip) return { tone: 'idle', label: 'Idle at base' }
   if (!live) return { tone: 'waiting', label: 'Waiting for driver GPS' }
   if (live.state === 'moving') return { tone: 'moving', label: `Moving · ${live.speedKmh} km/h` }
-  if (live.state === 'stopped') return { tone: 'stopped', label: 'stoppedForSec' in live ? `Stopped · ${mins(live.stoppedForSec)}` : 'Stopped' }
+  if (live.state === 'stopped') return { tone: 'stopped', label: 'stoppedForSec' in live ? `Stopped · ${mins((live as { stoppedForSec: number }).stoppedForSec)}` : 'Stopped' }
   return { tone: 'nosignal', label: `No signal · ${mins(live.ageSec)} ago` }
 }
 
