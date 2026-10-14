@@ -107,5 +107,5 @@ npm run lint --prefix user-app
 ## 2026-10-13: approval-based booking
 - Riders send requests (now / scheduled / multi-day, optional layover stops); no car or driver choice. Admin approves and assigns car + driver, can hold or cancel.
 - New statuses: requested, held, approved (then accepted, started, completed). Conflict checks stop a car or driver being double-booked.
-- Notifications (rider and driver pop-ups, e-mail) and 60/15 minute reminders, run from API requests. Backend files: lib/booking.ts, lib/notify.ts.
+- Notifications (rider and driver pop-ups, e-mail) and 30 minute reminders, run from API requests. Backend files: lib/booking.ts, lib/notify.ts.
 - Backend env DATA_DIR sets where JSON data is kept.

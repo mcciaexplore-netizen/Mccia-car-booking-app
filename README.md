@@ -59,7 +59,7 @@ serve everything over https. Known gap: `npm audit` still reports a postcss advi
 1. A rider sends a **request** in `user-app`: pickup, destination, optional layover stops, and when (now, one date and time, or a multi-day range). Riders do not choose a car or driver.
 2. The request lands in the admin **Queue**. The admin can **Approve** (choosing the car and the driver), **Hold** or **Cancel**. A car or driver already booked for an overlapping time is refused.
 3. On approval the rider gets an in-app pop-up ("Request approved, driver assigned" with a table of car, driver and PIN) and an e-mail (when SMTP is set). The driver gets the passenger assigned.
-4. Reminders go to both the rider and the driver 60 and 15 minutes before a scheduled start.
+4. Reminders go to both the rider and the driver 30 minutes before a scheduled start.
 5. The driver taps "Start heading to pickup" (from 30 minutes before the start), verifies the rider's PIN, and ends the trip.
 
 ## Prototype boundaries
