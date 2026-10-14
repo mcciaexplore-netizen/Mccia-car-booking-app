@@ -7,7 +7,6 @@ import NavScreen from './NavScreen'
 import { NoticeModal, useNotices } from './Notifications'
 import { api, ApiError, getToken, setToken, type Driver, type Ride } from './api'
 
-const ARRIVALS = [5, 10, 15]
 type Tab = 'requests' | 'trip' | 'history' | 'profile'
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
@@ -45,7 +44,7 @@ function Route({ ride }: { ride: Ride }) {
   )
 }
 
-function AssignedCard({ ride, arrival, setArrival, busy, onStart, onDecline }: { ride: Ride; arrival: number; setArrival: (m: number) => void; busy: boolean; onStart: () => void; onDecline: () => void }) {
+function AssignedCard({ ride, busy, onStart, onDecline }: { ride: Ride; busy: boolean; onStart: () => void; onDecline: () => void }) {
   const tel = ride.phone ? ride.phone.replace(/[^+\d]/g, '') : ''
   return (
     <article className="card" id={`ride-${ride.id}`}>
@@ -58,7 +57,6 @@ function AssignedCard({ ride, arrival, setArrival, busy, onStart, onDecline }: {
         <div><dt>Car</dt><dd>{ride.vehicle} · {ride.plate}</dd></div>
       </dl>
       <Route ride={ride} />
-      <div className="field"><span>I can reach the passenger in</span><div className="seg">{ARRIVALS.map((m) => <button type="button" key={m} className={arrival === m ? 'on' : ''} onClick={() => setArrival(m)}>{m} min</button>)}</div></div>
       <button className="btn btn-primary" onClick={onStart} disabled={busy || !ride.canStart}><Navigation size={16} /> {!ride.canStart ? `Starts at ${clock(new Date(+new Date(ride.window.start) - 30 * 60000).toISOString())}` : busy ? 'Starting…' : 'Start heading to pickup'}</button>
       <button type="button" className="link-btn muted-link" onClick={onDecline} disabled={busy}>Can't take this ride</button>
     </article>
@@ -84,7 +82,6 @@ export default function App() {
   const [offline, setOffline] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState('')
-  const [arrival, setArrival] = useState<Record<string, number>>({})
   const [pin, setPin] = useState<Record<string, string>>({})
   const [verified, setVerified] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('requests')
@@ -129,7 +126,7 @@ export default function App() {
 
   async function accept(r: Ride) {
     setBusy(r.id); setError('')
-    try { await api(`/driver/rides/${r.id}/accept`, { body: { arrivalMin: arrival[r.id] ?? 10 } }); await refresh() }
+    try { await api(`/driver/rides/${r.id}/accept`, { body: {} }); await refresh() }
     catch (e) { setError((e as Error).message) }
     setBusy(null)
   }
@@ -218,7 +215,7 @@ export default function App() {
           {pending.map((r, i) => (
             <div className="stack" key={r.id}>
               {(i === 0 || dayLabel(pending[i - 1].window.start) !== dayLabel(r.window.start)) && <div className="day-label">{dayLabel(r.window.start)}</div>}
-              <AssignedCard ride={r} arrival={arrival[r.id] ?? 10} setArrival={(m) => setArrival((o) => ({ ...o, [r.id]: m }))} busy={busy === r.id} onStart={() => accept(r)} onDecline={() => decline(r)} />
+              <AssignedCard ride={r} busy={busy === r.id} onStart={() => accept(r)} onDecline={() => decline(r)} />
             </div>
           ))}
 
@@ -226,7 +223,7 @@ export default function App() {
             <div className="card-head"><h2>Verify your rider</h2><span className="chip">{waiting.length}</span></div>
             {waiting.map((r) => (
               <article className="card" key={r.id}>
-                <div className="card-head"><span className="eyebrow">{r.id}</span><span className="chip green"><Check size={12} /> Arriving in {r.arrivalMin} min</span></div>
+                <div className="card-head"><span className="eyebrow">{r.id}</span><span className="chip green"><Check size={12} /> On the way to pickup</span></div>
                 <RiderBlock ride={r} />
                 <Route ride={r} />
                 <div className="mini-map"><MapView pickup={r.pickupCoords} destination={r.destinationCoords} showRoute={false} /></div>
