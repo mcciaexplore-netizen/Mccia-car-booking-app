@@ -2,10 +2,14 @@
 // interface as the Leaflet engine in mapAdapter.ts, which falls back to Leaflet when WebGL is unavailable.
 import * as maplibregl from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+// Production builds don't copy MapLibre's worker file next to the bundle, so ship it as an asset and point MapLibre at it.
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import type { AdShape, DotStyle, LL, LineStyle, MapAdapter } from './mapAdapter'
 
 // Styles available from OpenFreeMap: liberty, bright, positron. Swap for a custom Maputnik JSON (e.g. /styles/dark.json).
 export const OPENFREEMAP_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
+
+maplibregl.setWorkerUrl(workerUrl)
 
 let shapeId = 0
 const lngLat = (p: LL): [number, number] => [p.lng, p.lat]
