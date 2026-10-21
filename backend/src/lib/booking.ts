@@ -95,7 +95,7 @@ export function availabilityFor(ride: Ride) {
     return c ? `booked ${clock(c.from)} – ${clock(c.to)}` : null
   }
   return {
-    cars: CARS.map((c) => ({ name: c.name, plate: c.plate, seats: c.seats, fits: c.seats >= ride.passengers, busy: busy(c.name, '') })),
+    cars: CARS.map((c) => ({ name: c.name, plate: c.plate, seats: c.seats, fits: c.seats >= ride.passengers, busy: busy(c.name, ''), defaultDriverId: c.defaultDriverId ?? '' })),
     drivers: roster().map((d) => ({ id: d.id, name: d.name, registered: db.drivers.some((a) => a.driverId === d.id), busy: busy('', d.id) })),
   }
 }

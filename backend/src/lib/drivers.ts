@@ -90,7 +90,23 @@ export function removeDriver(id: string): Result<{ declined: number }> {
   const loc = db.locations.findIndex((l) => l.driverId === id)
   if (loc >= 0) { db.locations.splice(loc, 1); save.locations() }
   if (SEED_IDS.has(id) && !db.removed.includes(id)) { db.removed.push(id); save.removed() }
+  const defaults = db.cars.filter((c) => c.defaultDriverId === id)
+  for (const c of defaults) c.defaultDriverId = undefined
+  if (defaults.length) save.cars()
   return { ok: true, value: { declined } }
+}
+
+// Admin resets a driver's password (e.g. forgotten, or handing out a default one). Kept readable for the driver table,
+// like passwords set when an admin adds a driver.
+export function setDriverPassword(id: string, password: string): Result<true> {
+  const account = db.drivers.find((a) => a.driverId === id)
+  if (!account) return { ok: false, error: 'Driver not found or not signed up yet.', status: 404 }
+  if (password.length < 4) return { ok: false, error: 'Password must be at least 4 characters.', status: 400 }
+  account.salt = newSalt()
+  account.hash = hashPw(password, account.salt)
+  account.plainPassword = password
+  save.drivers()
+  return { ok: true, value: true }
 }
 
 export const setDriverNotes = (id: string, notes: string): boolean => {

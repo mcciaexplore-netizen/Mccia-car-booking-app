@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Building2, Clock3, Crosshair, LoaderCircle, MapPin, X } from 'lucide-react'
+import { Building2, Clock3, Crosshair, LoaderCircle, MapPin, Star, X } from 'lucide-react'
 import { MCCIA_OFFICES } from './offices'
+import { samePlace } from './frequent'
 import { ATTRIBUTION, newSessionToken, resolvePlace, reverseGeocode, searchPlaces, type Coords, type Place } from './places'
 
 const RECENT_KEY = 'rideops.recentPlaces.v2'
@@ -27,9 +28,11 @@ type Props = {
   allowCurrent?: boolean
   onLocated?: (coords: Coords) => void
   autoComplete?: string
+  /** Places this rider uses most, shown first (see frequent.ts). */
+  frequent?: Place[]
 }
 
-export default function LocationInput({ name, caption, placeholder, value, onChange, icon, tone, bias, allowCurrent, onLocated, autoComplete }: Props) {
+export default function LocationInput({ name, caption, placeholder, value, onChange, icon, tone, bias, allowCurrent, onLocated, autoComplete, frequent = [] }: Props) {
   const [open, setOpen] = useState(false)
   const [results, setResults] = useState<Place[]>([])
   const [loading, setLoading] = useState(false)
@@ -71,7 +74,7 @@ export default function LocationInput({ name, caption, placeholder, value, onCha
     const full = await resolvePlace(place, token.current).catch(() => place)
     token.current = newSessionToken()
     onChange(full.detail ? `${full.label}, ${full.detail}` : full.label, full.coords)
-    if (!full.id.startsWith('office-')) saveRecent(full)
+    if (!full.id.startsWith('office-') && !full.id.startsWith('frequent-')) saveRecent(full)
   }
 
   function useCurrentLocation() {
@@ -106,10 +109,13 @@ export default function LocationInput({ name, caption, placeholder, value, onCha
 
   const query = value.trim()
   const showSearch = typed && query.length >= 2
-  const recent = !showSearch ? loadRecent() : []
-  // MCCIA offices are always one tap away; while typing, only the matching ones stay.
-  const offices = MCCIA_OFFICES.filter((o) => !showSearch || `${o.label} ${o.detail}`.toLowerCase().includes(query.toLowerCase()))
-  const showPanel = open && (allowCurrent || showSearch || recent.length > 0 || offices.length > 0)
+  // Frequent places come first, then recent ones (minus any already listed as frequent). While typing, only matches stay.
+  const matches = (p: Place) => !showSearch || `${p.label} ${p.detail}`.toLowerCase().includes(query.toLowerCase())
+  const frequentShown = frequent.filter(matches)
+  const recent = !showSearch ? loadRecent().filter((p) => !frequent.some((f) => samePlace(f, p))) : []
+  // MCCIA offices are always one tap away.
+  const offices = MCCIA_OFFICES.filter(matches)
+  const showPanel = open && (allowCurrent || showSearch || frequentShown.length > 0 || recent.length > 0 || offices.length > 0)
 
   return (
     <div className={`location-input ${tone}-input`} ref={wrap}>
@@ -134,16 +140,24 @@ export default function LocationInput({ name, caption, placeholder, value, onCha
             </button>
           )}
           {geoError && <p className="loc-msg error">{geoError}</p>}
+          {frequentShown.length > 0 && <p className="loc-group">Frequent</p>}
+          {frequentShown.map((p) => (
+            <button type="button" className="loc-row" key={p.id} onClick={() => choose(p)}>
+              <span className="loc-icon blue"><Star size={15} /></span>
+              <span className="loc-text"><strong>{p.label}</strong><small>{p.detail}</small></span>
+            </button>
+          ))}
+          {recent.length > 0 && <p className="loc-group">Recent</p>}
+          {recent.map((p) => (
+            <button type="button" className="loc-row" key={`r-${p.label}-${p.detail}`} onClick={() => choose(p)}>
+              <span className="loc-icon"><Clock3 size={15} /></span>
+              <span className="loc-text"><strong>{p.label}</strong><small>{p.detail}</small></span>
+            </button>
+          ))}
           {offices.length > 0 && <p className="loc-group">MCCIA offices</p>}
           {offices.map((p) => (
             <button type="button" className="loc-row" key={p.id} onClick={() => choose(p)}>
               <span className="loc-icon blue"><Building2 size={15} /></span>
-              <span className="loc-text"><strong>{p.label}</strong><small>{p.detail}</small></span>
-            </button>
-          ))}
-          {recent.map((p) => (
-            <button type="button" className="loc-row" key={`r-${p.label}-${p.detail}`} onClick={() => choose(p)}>
-              <span className="loc-icon"><Clock3 size={15} /></span>
               <span className="loc-text"><strong>{p.label}</strong><small>{p.detail}</small></span>
             </button>
           ))}

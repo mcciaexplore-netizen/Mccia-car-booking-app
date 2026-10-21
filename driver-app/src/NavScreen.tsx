@@ -261,7 +261,7 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
       <section ref={sheet} className="nav-sheet">
         <div className="nav-eta">
           <span className="nav-eta-main"><strong>{nearTarget ? 'Arrived' : route ? `${remainingMin} min` : '—'}</strong><small>{nearTarget ? (accepted ? 'Rider is waiting for you' : 'Trip complete when you end it') : route ? `${formatDistance(remaining)} · arrive ${arriveAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Waiting for route'}</small></span>
-          <span className={`chip ${accepted ? '' : 'green'}`}>{accepted ? 'Heading to pickup' : 'Trip in progress'}</span>
+          <span className={`chip ${accepted ? '' : 'green'}`}>{accepted ? 'To pickup · not started' : 'Trip in progress'}</span>
         </div>
         <div className="row">
           <span className="avatar">{ride.riderName.charAt(0).toUpperCase()}</span>
@@ -269,12 +269,12 @@ export default function NavScreen({ ride, fix, busy, onClose, onVerify, onEnd }:
           {phone && <a className="call-btn" href={`tel:${phone}`} aria-label={`Call ${ride.riderName}`}><Phone size={17} /></a>}
         </div>
 
-        {accepted && !arrivedOpen && <button type="button" className="btn btn-primary" onClick={() => setArrivedOpen(true)}><Check size={17} /> I have arrived</button>}
+        {accepted && !arrivedOpen && <button type="button" className="btn btn-primary" onClick={() => setArrivedOpen(true)}><Check size={17} /> I'm at pickup · Enter PIN</button>}
         {accepted && arrivedOpen && <form className="stack tight-stack" onSubmit={submitPin}>
-          <span className="field-label"><KeyRound size={14} /> Ask {ride.riderName.split(' ')[0]} for their 4-digit PIN</span>
+          <span className="field-label"><KeyRound size={14} /> Ask {ride.riderName.split(' ')[0]} for their 4-digit PIN. The trip starts when it is correct.</span>
           <span className="input"><input className="pin-input" inputMode="numeric" maxLength={4} pattern="\d{4}" placeholder="• • • •" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} required autoFocus aria-label="Rider PIN" /></span>
           {pinError && <div className="alert error" role="alert">{pinError}</div>}
-          <button className="btn btn-primary" type="submit" disabled={busy || pin.length !== 4}><ShieldCheck size={17} /> Verify and start trip</button>
+          <button className="btn btn-primary" type="submit" disabled={busy || pin.length !== 4}><ShieldCheck size={17} /> Verify PIN and start trip</button>
         </form>}
 
         {!accepted && !confirmEnd && <button type="button" className="btn btn-primary" onClick={() => setConfirmEnd(true)}><Flag size={17} /> {arrived ? 'You have arrived · End trip' : 'End trip'}</button>}

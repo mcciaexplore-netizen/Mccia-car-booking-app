@@ -119,7 +119,7 @@ export default function TripPage({ rideId, user, onDone }: { rideId: string; use
         {ride.otp && !closed && <div className="card pin-card" aria-label="Ride PIN">
           <div className="row"><KeyRound size={16} /><span className="eyebrow">Your ride PIN</span></div>
           <div className="pin-digits" aria-label={`PIN ${ride.otp.split('').join(' ')}`}>{ride.otp.split('').map((d, i) => <span key={i}>{d}</span>)}</div>
-          <p className="hint">{ride.status === 'started' ? 'PIN verified. Your trip has started.' : <>Tell this PIN to <strong>{ride.driverName}</strong> when they arrive.</>}</p>
+          <p className="hint">{ride.status === 'started' ? 'PIN verified. Your trip has started.' : <>Tell this PIN to <strong>{ride.driverName}</strong> only when you are at the car. Your trip starts when they enter it.</>}</p>
         </div>}
 
         <div className="card">

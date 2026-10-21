@@ -6,6 +6,7 @@ import { searchPlaces, type Coords } from './places'
 import { api, ApiError } from './api'
 import { whenLabel, whenText, routeText, type Ride } from './rides'
 import type { User } from './auth'
+import type { Place } from './places'
 
 type Mode = Ride['tripType']
 type StopField = { key: number; text: string; coords?: Coords }
@@ -24,8 +25,8 @@ const MODES: { id: Mode; label: string; hint: string; icon: typeof Zap }[] = [
 
 let stopKey = 0
 
-export default function BookingForm({ user, here, onLocated, prefill, onSent, onViewRequests }: {
-  user: User; here?: Coords; onLocated: (c: Coords) => void; prefill?: Prefill
+export default function BookingForm({ user, here, onLocated, prefill, onSent, onViewRequests, frequent }: {
+  user: User; here?: Coords; onLocated: (c: Coords) => void; prefill?: Prefill; frequent: Place[]
   onSent: () => void; onViewRequests: () => void
 }) {
   const [pickup, setPickup] = useState(prefill?.pickup ?? '')
@@ -107,18 +108,18 @@ export default function BookingForm({ user, here, onLocated, prefill, onSent, on
   return (
     <form className="stack" onSubmit={submit}>
       <div className="card tight">
-        <LocationInput name="pickup" caption="FROM" placeholder="Pickup location" tone="pickup" icon={<MapPin size={15} />} value={pickup} onChange={(text, c) => { setPickup(text); setPickupCoords(c) }} bias={here} allowCurrent onLocated={onLocated} />
+        <LocationInput frequent={frequent} name="pickup" caption="FROM" placeholder="Pickup location" tone="pickup" icon={<MapPin size={15} />} value={pickup} onChange={(text, c) => { setPickup(text); setPickupCoords(c) }} bias={here} allowCurrent onLocated={onLocated} />
         {stops.map((s, i) => (
           <div key={s.key} className="stop-row">
             <div className="swap-row"><span className="divider" /></div>
             <div className="stop-line">
-              <LocationInput name={`stop-${s.key}`} caption={`STOP ${i + 1}`} placeholder="Layover stop" tone="pickup" icon={<span className="stop-num">{i + 1}</span>} value={s.text} onChange={(text, c) => patchStop(s.key, text, c)} bias={here} />
+              <LocationInput frequent={frequent} name={`stop-${s.key}`} caption={`STOP ${i + 1}`} placeholder="Layover stop" tone="pickup" icon={<span className="stop-num">{i + 1}</span>} value={s.text} onChange={(text, c) => patchStop(s.key, text, c)} bias={here} />
               <button type="button" className="stop-remove" aria-label={`Remove stop ${i + 1}`} onClick={() => setStops((all) => all.filter((x) => x.key !== s.key))}><X size={15} /></button>
             </div>
           </div>
         ))}
         <div className="swap-row"><span className="divider" /><button type="button" className="swap-btn" onClick={swapLocations} aria-label="Swap pickup and destination"><ArrowDownUp size={14} /></button><span className="divider" /></div>
-        <LocationInput name="destination" caption="TO" placeholder="Where to?" tone="destination" icon={<Navigation size={15} />} value={destination} onChange={(text, c) => { setDestination(text); setDestCoords(c) }} bias={here} />
+        <LocationInput frequent={frequent} name="destination" caption="TO" placeholder="Where to?" tone="destination" icon={<Navigation size={15} />} value={destination} onChange={(text, c) => { setDestination(text); setDestCoords(c) }} bias={here} />
         {stops.length < MAX_STOPS && <button type="button" className="add-stop" onClick={() => setStops((s) => [...s, { key: ++stopKey, text: '' }])}><Plus size={15} /> Add a stop{stops.length > 0 ? ` (${stops.length}/${MAX_STOPS})` : ''}</button>}
       </div>
 

@@ -4,9 +4,27 @@ import { Check, CarFront, Clock3, PauseCircle, Plus, UserRound, X, XCircle } fro
 import { api } from './api'
 import { routeText, whenLabel, type QueueRide } from './requestUtils'
 
-type CarOption = { name: string; plate: string; seats: number }
+type CarOption = { name: string; plate: string; seats: number; defaultDriverId?: string }
 type DriverOption = { id: string; name: string; registered: boolean }
 type Options = { cars: (CarOption & { fits: boolean; busy: string | null })[]; drivers: (DriverOption & { busy: string | null })[] }
+type PickableDriver = DriverOption & { busy?: string | null }
+
+// The driver to pre-select for a car: its default driver when they can take the ride, otherwise the first free driver.
+function pickDriver(car: CarOption | undefined, drivers: PickableDriver[]) {
+  const free = (d: PickableDriver) => d.registered && !d.busy
+  const def = car?.defaultDriverId ? drivers.find((d) => d.id === car.defaultDriverId) : undefined
+  return def && free(def) ? def.id : drivers.find(free)?.id ?? ''
+}
+
+// Under the driver list: says whether the car's default driver was picked, or why not.
+function DefaultDriverNote({ car, drivers, driverId }: { car: CarOption | undefined; drivers: PickableDriver[]; driverId: string }) {
+  const def = car?.defaultDriverId ? drivers.find((d) => d.id === car.defaultDriverId) : undefined
+  if (!car || !def) return null
+  if (def.id === driverId) return <small className="muted">{def.name} is the default driver for {car.name}.</small>
+  if (!def.registered) return <small className="muted">{def.name} (default for {car.name}) has not signed up yet. Choose another driver.</small>
+  if (def.busy) return <small className="muted">{def.name} (default for {car.name}) is not available: {def.busy}. Choose another driver.</small>
+  return <small className="muted">The default driver for {car.name} is {def.name}.</small>
+}
 
 function Shell({ id, eyebrow, title, onClose, children }: { id: string; eyebrow: string; title: string; onClose: () => void; children: ReactNode }) {
   useEffect(() => {
@@ -51,9 +69,9 @@ export function ApproveModal({ ride, cars, drivers, onClose, onDone }: { ride: Q
       if (!alive) return
       setOpts(o)
       const firstCar = o.cars.find((c) => c.fits && !c.busy) ?? o.cars.find((c) => c.fits)
-      const firstDriver = o.drivers.find((d) => d.registered && !d.busy) ?? o.drivers.find((d) => d.registered)
-      setCar((c) => c || (ride.vehicle && o.cars.some((x) => x.name === ride.vehicle) ? ride.vehicle : firstCar?.name ?? ''))
-      setDriverId((d) => d || (ride.driverId && o.drivers.some((x) => x.id === ride.driverId) ? ride.driverId : firstDriver?.id ?? ''))
+      const carName = ride.vehicle && o.cars.some((x) => x.name === ride.vehicle) ? ride.vehicle : firstCar?.name ?? ''
+      setCar((c) => c || carName)
+      setDriverId((d) => d || (ride.driverId && o.drivers.some((x) => x.id === ride.driverId) ? ride.driverId : pickDriver(o.cars.find((x) => x.name === carName), o.drivers)))
     }).catch(() => { if (alive) setOpts({ cars: cars.map((c) => ({ ...c, fits: c.seats >= ride.passengers, busy: null })), drivers: drivers.map((d) => ({ ...d, busy: null })) }) })
     return () => { alive = false }
   }, [ride.id, ride.vehicle, ride.driverId, ride.passengers, cars, drivers])
@@ -72,15 +90,16 @@ export function ApproveModal({ ride, cars, drivers, onClose, onDone }: { ride: Q
       <Summary ride={ride} />
       <form className="stack" onSubmit={submit}>
         <label className="field"><span>Car</span><span className="input"><CarFront size={16} />
-          <select value={car} onChange={(e) => setCar(e.target.value)} required>
+          <select value={car} onChange={(e) => { setCar(e.target.value); if (opts) setDriverId(pickDriver(opts.cars.find((x) => x.name === e.target.value), opts.drivers)) }} required>
             <option value="" disabled>Choose a car</option>
             {(opts?.cars ?? []).map((c) => <option key={c.name} value={c.name} disabled={!c.fits || !!c.busy}>{c.name} · {c.plate} · {c.seats} seats{!c.fits ? ' (too small)' : c.busy ? ` (${c.busy})` : ''}</option>)}
           </select></span></label>
         <label className="field"><span>Driver</span><span className="input"><UserRound size={16} />
           <select value={driverId} onChange={(e) => setDriverId(e.target.value)} required>
             <option value="" disabled>Choose a driver</option>
-            {(opts?.drivers ?? []).map((d) => <option key={d.id} value={d.id} disabled={!d.registered || !!d.busy}>{d.name}{!d.registered ? ' (not signed up yet)' : d.busy ? ` (${d.busy})` : ''}</option>)}
+            {(opts?.drivers ?? []).map((d) => <option key={d.id} value={d.id} disabled={!d.registered || !!d.busy}>{d.name}{opts?.cars.find((c) => c.name === car)?.defaultDriverId === d.id ? ' · default' : ''}{!d.registered ? ' (not signed up yet)' : d.busy ? ` (${d.busy})` : ''}</option>)}
           </select></span></label>
+        <DefaultDriverNote car={opts?.cars.find((c) => c.name === car)} drivers={opts?.drivers ?? []} driverId={driverId} />
         {error && <div className="alert error" role="alert">{error}</div>}
         <div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={onClose}>Close</button><button type="submit" className="btn btn-primary" disabled={busy || !car || !driverId}><Check size={16} /> {ride.status === 'approved' ? 'Save' : 'Approve & assign'}</button></div>
       </form>
@@ -127,10 +146,14 @@ export function CancelModal({ ride, onClose, onDone }: { ride: QueueRide; onClos
 }
 
 // Admin books for a walk-in or phone caller: the admin picks the car and the driver, so it is approved straight away.
-export function WalkInModal({ cars, drivers, onClose, onDone }: { cars: CarOption[]; drivers: DriverOption[]; onClose: () => void; onDone: (message: string) => void }) {
+// A driver's `busy` = on a trip right now. That only blocks "Now" bookings; the server checks scheduled times when saving.
+export function WalkInModal({ cars, drivers, onClose, onDone }: { cars: CarOption[]; drivers: PickableDriver[]; onClose: () => void; onDone: (message: string) => void }) {
   const [mode, setMode] = useState<'now' | 'scheduled' | 'multiday'>('now')
   const [error, setError] = useState('')
-  const registered = drivers.filter((d) => d.registered)
+  const options = drivers.map((d) => ({ ...d, busy: mode === 'now' ? d.busy : null }))
+  const [car, setCar] = useState(cars[0]?.name ?? '')
+  const [driverId, setDriverId] = useState(() => pickDriver(cars[0], drivers))
+  const carOption = cars.find((c) => c.name === car)
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const f = new FormData(e.currentTarget)
@@ -138,7 +161,7 @@ export function WalkInModal({ cars, drivers, onClose, onDone }: { cars: CarOptio
     try {
       await api('/admin/rides', { method: 'POST', body: {
         riderName: String(f.get('name')).trim(), phone: String(f.get('phone') ?? '').trim(), pickup: String(f.get('origin')).trim(), destination: String(f.get('destination')).trim(),
-        passengers: Number(f.get('passengers')) || 1, car: String(f.get('car')), driverId: String(f.get('driverId')),
+        passengers: Number(f.get('passengers')) || 1, car, driverId,
         tripType: mode, startAt: mode === 'now' ? undefined : iso('startAt'), endAt: mode === 'multiday' ? iso('endAt') : undefined,
       } })
       onDone('Booking added and approved')
@@ -158,8 +181,12 @@ export function WalkInModal({ cars, drivers, onClose, onDone }: { cars: CarOptio
         </div>
         {mode !== 'now' && <label className="field"><span>{mode === 'multiday' ? 'From' : 'Pickup date and time'}</span><span className="input"><input name="startAt" type="datetime-local" required /></span></label>}
         {mode === 'multiday' && <label className="field"><span>Until</span><span className="input"><input name="endAt" type="datetime-local" required /></span></label>}
-        <label className="field"><span>Car</span><span className="input"><CarFront size={16} /><select name="car" required defaultValue={cars[0]?.name}>{cars.map((c) => <option key={c.name} value={c.name}>{c.name} · {c.plate} · {c.seats} seats</option>)}</select></span></label>
-        <label className="field"><span>Driver</span><span className="input"><UserRound size={16} /><select name="driverId" required defaultValue={registered[0]?.id}>{registered.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></span></label>
+        <label className="field"><span>Car</span><span className="input"><CarFront size={16} /><select value={car} onChange={(e) => { setCar(e.target.value); setDriverId(pickDriver(cars.find((c) => c.name === e.target.value), options)) }} required>{cars.map((c) => <option key={c.name} value={c.name}>{c.name} · {c.plate} · {c.seats} seats</option>)}</select></span></label>
+        <label className="field"><span>Driver</span><span className="input"><UserRound size={16} /><select value={driverId} onChange={(e) => setDriverId(e.target.value)} required>
+          <option value="" disabled>Choose a driver</option>
+          {options.map((d) => <option key={d.id} value={d.id} disabled={!d.registered || !!d.busy}>{d.name}{carOption?.defaultDriverId === d.id ? ' · default' : ''}{!d.registered ? ' (not signed up yet)' : d.busy ? ` (${d.busy})` : ''}</option>)}
+        </select></span></label>
+        <DefaultDriverNote car={carOption} drivers={options} driverId={driverId} />
         {error && <div className="alert error" role="alert">{error}</div>}
         <div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary"><Plus size={16} /> Add booking</button></div>
       </form>

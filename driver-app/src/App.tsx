@@ -44,6 +44,14 @@ function Route({ ride }: { ride: Ride }) {
   )
 }
 
+// The three steps of every ride. Heading to pickup does not start the trip: only the rider's PIN at pickup does.
+function RideSteps({ at }: { at: 1 | 2 | 3 }) {
+  const steps = ['Drive to pickup', "Enter rider's PIN", 'Trip starts']
+  return <ol className="ride-steps" aria-label={`Step ${at} of 3`}>
+    {steps.map((s, i) => <li key={s} className={i + 1 < at ? 'done' : i + 1 === at ? 'now' : ''}><b>{i + 1 < at ? <Check size={12} /> : i + 1}</b>{s}</li>)}
+  </ol>
+}
+
 function AssignedCard({ ride, busy, onStart, onDecline }: { ride: Ride; busy: boolean; onStart: () => void; onDecline: () => void }) {
   const tel = ride.phone ? ride.phone.replace(/[^+\d]/g, '') : ''
   return (
@@ -57,7 +65,9 @@ function AssignedCard({ ride, busy, onStart, onDecline }: { ride: Ride; busy: bo
         <div><dt>Car</dt><dd>{ride.vehicle} · {ride.plate}</dd></div>
       </dl>
       <Route ride={ride} />
-      <button className="btn btn-primary" onClick={onStart} disabled={busy || !ride.canStart}><Navigation size={16} /> {!ride.canStart ? `Starts at ${clock(new Date(+new Date(ride.window.start) - 30 * 60000).toISOString())}` : busy ? 'Starting…' : 'Start heading to pickup'}</button>
+      <RideSteps at={1} />
+      <button className="btn btn-primary" onClick={onStart} disabled={busy || !ride.canStart}><Navigation size={16} /> {!ride.canStart ? `You can leave from ${clock(new Date(+new Date(ride.window.start) - 30 * 60000).toISOString())}` : busy ? 'Please wait…' : 'Step 1: Drive to pickup'}</button>
+      <small className="muted">The trip does not start yet. It starts only when you enter the rider's PIN at the pickup point.</small>
       <button type="button" className="link-btn muted-link" onClick={onDecline} disabled={busy}>Can't take this ride</button>
     </article>
   )
@@ -220,18 +230,19 @@ export default function App() {
           ))}
 
           {waiting.length > 0 && <>
-            <div className="card-head"><h2>Verify your rider</h2><span className="chip">{waiting.length}</span></div>
+            <div className="card-head"><h2>At pickup: enter the rider's PIN</h2><span className="chip">{waiting.length}</span></div>
             {waiting.map((r) => (
               <article className="card" key={r.id}>
-                <div className="card-head"><span className="eyebrow">{r.id}</span><span className="chip green"><Check size={12} /> On the way to pickup</span></div>
+                <div className="card-head"><span className="eyebrow">{r.id}</span><span className="chip">Driving to pickup · trip not started</span></div>
+                <RideSteps at={2} />
                 <RiderBlock ride={r} />
                 <Route ride={r} />
                 <div className="mini-map"><MapView pickup={r.pickupCoords} destination={r.destinationCoords} showRoute={false} /></div>
                 <button type="button" className="btn btn-primary" onClick={() => setNavRideId(r.id)}><Navigation size={17} /> Open map and navigate to pickup</button>
                 <form className="stack tight-stack" onSubmit={(e) => verify(e, r)}>
-                  <span className="field-label"><KeyRound size={14} /> Ask the rider for their 4-digit PIN</span>
+                  <span className="field-label"><KeyRound size={14} /> Step 2: when the rider is with you, ask for their 4-digit PIN</span>
                   <span className="input"><input className="pin-input" inputMode="numeric" maxLength={4} pattern="\d{4}" placeholder="• • • •" value={pin[r.id] ?? ''} onChange={(e) => setPin((o) => ({ ...o, [r.id]: e.target.value.replace(/\D/g, '') }))} required aria-label="Rider PIN" /></span>
-                  <button className="btn btn-primary" type="submit" disabled={busy === r.id}><ShieldCheck size={16} /> Verify and start trip</button>
+                  <button className="btn btn-primary" type="submit" disabled={busy === r.id}><ShieldCheck size={16} /> Verify PIN and start trip</button>
                 </form>
               </article>
             ))}
@@ -240,8 +251,9 @@ export default function App() {
 
         {tab === 'trip' && <>
           <div className="m-title"><h1>Current trip</h1><p>{active ? `With ${active.riderName}` : 'No trip in progress'}</p></div>
-          {!active ? <div className="card empty"><Navigation size={22} />No trip right now. Start heading to pickup and verify the rider to begin.</div> : <>
-            {verified === active.id && <div className="alert ok" role="status"><Check size={16} /> Rider verified. Trip started!</div>}
+          {!active ? <div className="card empty"><Navigation size={22} />No trip right now. Drive to pickup, then enter the rider's PIN to start the trip.</div> : <>
+            {verified === active.id && <div className="alert ok" role="status"><Check size={16} /> PIN correct. Trip started!</div>}
+            <RideSteps at={3} />
             <LocationCard sharing={sharing} />
             <div className="trip-map"><MapView pickup={active.pickupCoords} destination={active.destinationCoords} showRoute /></div>
             <div className="card">

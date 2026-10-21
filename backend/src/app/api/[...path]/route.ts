@@ -9,10 +9,12 @@ import {
 } from '@/lib/dispatch'
 import { allocate, availabilityFor, parseRequest } from '@/lib/booking'
 import { addNotification, maskEmail, notifyApproved, notifyCancelled, notifyHeld, runReminders } from '@/lib/notify'
-import { driverReport, registerDriver, removeDriver, setDriverNotes } from '@/lib/drivers'
+import { driverReport, registerDriver, removeDriver, setDriverNotes, setDriverPassword } from '@/lib/drivers'
 import { auth, body, fail, json } from '@/lib/http'
 
 const publicAccount = ({ salt: _s, hash: _h, ...a }: Account) => a
+// A car's default driver: '' or unknown ids clear it.
+const defaultDriver = (v: unknown) => { const id = String(v ?? '').trim(); return id && roster().some((d) => d.id === id) ? id : undefined }
 type Ctx = { params: Promise<{ path: string[] }> }
 
 async function handle(req: Request, ctx: Ctx): Promise<Response> {
@@ -22,7 +24,7 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
   const [a, b, c, d] = p
 
   if (a === 'health') return json({ ok: true })
-  if (a === 'cars' && m === 'GET') return json(CARS.map(({ depot: _d, ...car }) => car))
+  if (a === 'cars' && m === 'GET') return json(CARS.map(({ depot: _d, defaultDriverId: _dd, ...car }) => car))
 
   // Used by the realtime (WebSocket) server: which role, if any, may watch this ride's live location.
   if (a === 'realtime' && b === 'access' && c && m === 'GET') {
@@ -199,6 +201,7 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
         name, plate, seats, pickupEtaMin: eta >= 1 && eta <= 180 ? eta : 20, depot: validCoords(x.depot) ?? { lat: 18.5204, lon: 73.8567 },
         model: String(x.model ?? '').trim() || undefined, color: String(x.color ?? '').trim() || undefined, fuel: String(x.fuel ?? '').trim() || undefined,
         year: year >= 1990 && year <= 2100 ? year : undefined, notes: String(x.notes ?? '').trim() || undefined, gpsId: String(x.gpsId ?? '').trim() || undefined,
+        defaultDriverId: defaultDriver(x.defaultDriverId),
       })
       save.cars()
       return json({ ok: true }, 201)
@@ -224,6 +227,7 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
       Object.assign(car, {
         name, plate, seats, gpsId: opt('gpsId', car.gpsId), model: opt('model', car.model), color: opt('color', car.color), fuel: opt('fuel', car.fuel), notes: opt('notes', car.notes),
         year: year && year >= 1990 && year <= 2100 ? year : undefined, pickupEtaMin: eta >= 1 && eta <= 180 ? eta : car.pickupEtaMin,
+        defaultDriverId: x.defaultDriverId === undefined ? car.defaultDriverId : defaultDriver(x.defaultDriverId),
       })
       // Rides are keyed on the car name and number, so keep them in step.
       for (const ride of db.rides) if (ride.vehicle === oldName) { ride.vehicle = name; ride.plate = plate }
@@ -244,6 +248,11 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
     if (b === 'drivers' && !c && m === 'POST') {
       const made = registerDriver(await body(req), true)
       return made.ok ? json({ driver: made.value }, 201) : fail(made.error, made.status)
+    }
+    if (b === 'drivers' && c && d === 'password' && m === 'POST') {
+      const x = await body(req)
+      const done = setDriverPassword(c, String(x.password ?? ''))
+      return done.ok ? json({ ok: true }) : fail(done.error, done.status)
     }
     if (b === 'drivers' && c && m === 'PATCH') {
       const x = await body(req)

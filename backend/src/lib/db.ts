@@ -41,13 +41,14 @@ export type Notification = {
 }
 
 // gpsId = the tracker's device id / IMEI, so reports from the car's GPS unit can be matched to this car.
-export type Car = { name: string; plate: string; seats: number; pickupEtaMin: number; depot: Coords; model?: string; color?: string; fuel?: string; year?: number; notes?: string; gpsId?: string }
+// defaultDriverId = the driver pre-selected when this car is assigned to a ride (the admin can still pick someone else).
+export type Car = { name: string; plate: string; seats: number; pickupEtaMin: number; depot: Coords; model?: string; color?: string; fuel?: string; year?: number; notes?: string; gpsId?: string; defaultDriverId?: string }
 
 // Last report from each car's own GPS tracker, keyed by car plate.
 export type CarGps = { plate: string; lat: number; lon: number; speedKmh: number; heading: number | null; ignition: boolean | null; fuelPct: number | null; odometerKm: number | null; batteryV: number | null; ts: number; deviceTs: number }
 export const DEFAULT_CARS: Car[] = [
-  { name: 'Ertiga', seats: 6, plate: 'MH 12 AB 1001', pickupEtaMin: 22, depot: { lat: 18.5308, lon: 73.8475 } },
-  { name: 'Innova', seats: 6, plate: 'MH 12 CD 1002', pickupEtaMin: 34, depot: { lat: 18.5089, lon: 73.9259 } },
+  { name: 'Ertiga', seats: 6, plate: 'MH 12 YH 2582', pickupEtaMin: 22, depot: { lat: 18.5308, lon: 73.8475 } },
+  { name: 'Innova', seats: 6, plate: 'MH 12 YN 1745', pickupEtaMin: 34, depot: { lat: 18.5089, lon: 73.9259 } },
 ]
 
 // Last known GPS position of each driver (updated by the driver app while a ride is active).

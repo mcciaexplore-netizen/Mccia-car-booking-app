@@ -4,6 +4,7 @@ import AccountPage from './AccountPage'
 import TripPage from './TripPage'
 import RideHistory from './RideHistory'
 import BookingForm, { type Prefill } from './BookingForm'
+import { frequentPlaces } from './frequent'
 import Notifications from './Notifications'
 import { isActive, STATUS_LABEL, type Ride } from './rides'
 import type { Coords } from './places'
@@ -69,7 +70,7 @@ function App({ user, onUser, onLogout }: { user: User; onUser: (u: User) => void
                 <span className="row"><span className="avatar"><CarFront size={18} /></span><span className="grow"><strong>{activeSummary(activeRide)[0]}</strong><small>{activeSummary(activeRide)[1]}</small></span><ArrowRight size={18} /></span>
               </button>}
 
-              <BookingForm key={prefill?.n ?? 0} user={user} here={here} onLocated={setHere} prefill={prefill} onSent={() => void refresh()} onViewRequests={() => setTab('rides')} />
+              <BookingForm key={prefill?.n ?? 0} frequent={frequentPlaces(rides)} user={user} here={here} onLocated={setHere} prefill={prefill} onSent={() => void refresh()} onViewRequests={() => setTab('rides')} />
             </div>
 
             {rides && rides.length > 0 && <div className="stack book-side"><div className="card-head"><h2>Recent rides</h2><button type="button" className="link-btn" onClick={() => setTab('rides')}>See all</button></div><RideHistory rides={rides} limit={2} onOpen={setRideId} onRebook={rebook} onChanged={refresh} /></div>}

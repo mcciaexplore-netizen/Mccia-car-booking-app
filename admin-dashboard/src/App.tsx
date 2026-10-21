@@ -23,7 +23,7 @@ type Ride = {
   startedAt: string | null
   live: { lat: number; lon: number; speedKmh: number; state: 'moving' | 'stopped' | 'offline'; stoppedForSec: number; ageSec: number } | null
 }
-type Car = { name: string; plate: string; seats: number; model: string; color: string; fuel: string; year: number | null; notes: string; gpsId: string; gps: { lat: number; lon: number; speedKmh: number; ignition: boolean | null; fuelPct: number | null; odometerKm: number | null; ts: string; ageSec: number; state: 'moving' | 'stopped' | 'offline' } | null; pickupEtaMin: number; depot: Coords; status: 'busy' | 'idle'; freeInMin: number; trip: Ride | null; queued: number }
+type Car = { name: string; plate: string; seats: number; model: string; color: string; fuel: string; year: number | null; notes: string; gpsId: string; defaultDriverId: string; gps: { lat: number; lon: number; speedKmh: number; ignition: boolean | null; fuelPct: number | null; odometerKm: number | null; ts: string; ageSec: number; state: 'moving' | 'stopped' | 'offline' } | null; pickupEtaMin: number; depot: Coords; status: 'busy' | 'idle'; freeInMin: number; trip: Ride | null; queued: number }
 type DriverRow = {
   id: string; name: string; phone: string; registered: boolean; joinedAt: string | null; notes: string
   status: 'on-trip' | 'to-pickup' | 'available' | 'not-registered'
@@ -36,7 +36,6 @@ type DriverRow = {
   recent: { id: string; rider: string; pickup: string; destination: string; vehicle: string; status: string; otp: string | null; at: string }[]
 }
 type Overview = { now: string; cars: Car[]; trips: Ride[]; queue: Ride[]; upcoming: Ride[]; activity: Ride[]; drivers: DriverRow[] }
-type Driver = { id: string; name: string }
 type Admin = { id: string; name: string; email: string }
 const viewFromHash = (): View => (window.location.hash === '#/maintenance' ? 'maintenance' : window.location.hash === '#/invoices' ? 'invoices' : 'overview')
 type View = 'overview' | 'trips' | 'queue' | 'drivers' | 'cars' | 'maintenance' | 'invoices'
@@ -136,7 +135,6 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
   const [clock, setClock] = useState(() => new Date())
   const [data, setData] = useState<Overview>({ now: new Date().toISOString(), cars: [], trips: [], queue: [], upcoming: [], activity: [], drivers: [] })
   const [online, setOnline] = useState(true)
-  const [drivers, setDrivers] = useState<Driver[]>([])
   const [queueFilter, setQueueFilter] = useState('all')
   const [mapFilter, setMapFilter] = useState('all')
   const [selectedCar, setSelectedCar] = useState('') // car clicked on the map: its live details show under the map
@@ -180,6 +178,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
   const [pw, setPw] = useState({ current: '', next: '', confirm: '' })
   const [pwError, setPwError] = useState('')
   const [notesDraft, setNotesDraft] = useState('')
+  const [newDriverPw, setNewDriverPw] = useState('')
   const { cars, trips, queue, drivers: driverRows } = data
   const selectedDriver = driverRows.find((d) => d.id === selectedDriverId) ?? null
   const isBusy = (d: DriverRow) => d.status === 'on-trip' || d.status === 'to-pickup'
@@ -229,7 +228,6 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
     void refresh()
     const poll = window.setInterval(refresh, 2000)
     const timer = window.setInterval(() => setClock(new Date()), 15_000)
-    api<Driver[]>('/drivers').then(setDrivers).catch(() => undefined)
     return () => { window.clearInterval(poll); window.clearInterval(timer) }
   }, [refresh])
 
@@ -271,7 +269,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
     const text = (k: string) => String(entry.get(k) ?? '').trim()
     const name = text('name')
     const editing = carForm !== null && carForm !== 'new' ? carForm : null
-    const body = { name, plate: text('plate'), seats: Number(text('seats')), model: text('model'), color: text('color'), fuel: text('fuel'), year: text('year'), pickupEtaMin: text('eta'), notes: text('notes'), gpsId: text('gpsId') }
+    const body = { name, plate: text('plate'), seats: Number(text('seats')), model: text('model'), color: text('color'), fuel: text('fuel'), year: text('year'), pickupEtaMin: text('eta'), notes: text('notes'), gpsId: text('gpsId'), defaultDriverId: text('defaultDriverId') }
     void run(async () => {
       if (editing) await api(`/admin/cars/${encodeURIComponent(editing.name)}`, { method: 'PATCH', body })
       else await api('/admin/cars', { method: 'POST', body })
@@ -295,6 +293,15 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
     }, `${driver.name} deleted`)
   }
 
+  function resetDriverPassword(driver: DriverRow) {
+    const password = newDriverPw.trim()
+    void run(async () => {
+      await api(`/admin/drivers/${driver.id}/password`, { method: 'POST', body: { password } })
+      setNewDriverPw('')
+      await refresh()
+    }, `Password for ${driver.name} changed. Share it with them so they can sign in.`)
+  }
+
   function saveNotes(driver: DriverRow) {
     void run(async () => { await api(`/admin/drivers/${driver.id}`, { method: 'PATCH', body: { notes: notesDraft } }); await refresh() }, 'Notes saved')
   }
@@ -316,6 +323,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
   function openDriver(driver: DriverRow) {
     setSelectedDriverId(driver.id)
     setNotesDraft(driver.notes)
+    setNewDriverPw('')
   }
 
   const afterDialog = (message: string) => { setDialog(null); setShowForm(false); notify(message); void refresh() }
@@ -513,7 +521,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
             <div className="table">
               <div className="trow carrow thead"><span>Car</span><span>Number</span><span>Seats</span><span>Details</span><span>Status</span><span>GPS</span><span /></div>
               {cars.map((c) => <div className="trow carrow clickable" key={c.name} title="Click to edit" onClick={() => setCarForm(c)}>
-                <span className="cell"><span className="avatar sm"><CarFront size={14} /></span><span className="grow"><strong>{c.name}</strong><small>{c.model || '—'}</small></span></span>
+                <span className="cell"><span className="avatar sm"><CarFront size={14} /></span><span className="grow"><strong>{c.name}</strong><small>{[c.model, c.defaultDriverId && `Default: ${driverRows.find((d) => d.id === c.defaultDriverId)?.name ?? '—'}`].filter(Boolean).join(' · ') || '—'}</small></span></span>
                 <span className="cell">{c.plate}</span>
                 <span className="cell">{c.seats} seats</span>
                 <span className="cell muted">{[c.color, c.fuel, c.year].filter(Boolean).join(' · ') || '—'}</span>
@@ -564,7 +572,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
         </div>}
       </main>
 
-      {showForm && <WalkInModal cars={cars} drivers={drivers.map((d) => ({ ...d, registered: driverRows.some((r) => r.id === d.id && r.registered) }))} onClose={() => setShowForm(false)} onDone={afterDialog} />}
+      {showForm && <WalkInModal cars={cars} drivers={driverRows.map((d) => ({ id: d.id, name: d.name, registered: d.registered, busy: isBusy(d) ? 'on a trip now' : null }))} onClose={() => setShowForm(false)} onDone={afterDialog} />}
       {dialog?.kind === 'approve' && <ApproveModal ride={dialog.ride as QueueRide} cars={cars} drivers={driverRows.map((d) => ({ id: d.id, name: d.name, registered: d.registered }))} onClose={() => setDialog(null)} onDone={afterDialog} />}
       {dialog?.kind === 'hold' && <HoldModal ride={dialog.ride as QueueRide} onClose={() => setDialog(null)} onDone={afterDialog} />}
       {dialog?.kind === 'cancel' && <CancelModal ride={dialog.ride as QueueRide} onClose={() => setDialog(null)} onDone={afterDialog} />}
@@ -595,6 +603,10 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
             <label className="field"><span>Fuel (optional)</span><span className="input"><select name="fuel" defaultValue={carForm === 'new' ? '' : carForm.fuel}><option value="">Not set</option><option>Petrol</option><option>Diesel</option><option>CNG</option><option>Electric</option></select></span></label>
             <label className="field"><span>Year (optional)</span><span className="input"><input name="year" type="number" min={1990} max={2100} placeholder="2023" defaultValue={carForm === 'new' ? '' : carForm.year ?? ''} /></span></label>
             <label className="field"><span>Typical pickup time in minutes (optional)</span><span className="input"><input name="eta" type="number" min={1} max={180} placeholder="20" defaultValue={carForm === 'new' ? '' : carForm.pickupEtaMin} /></span></label>
+            <label className="field"><span>Default driver (optional)</span><span className="input"><UserRound size={16} /><select name="defaultDriverId" defaultValue={carForm === 'new' ? '' : carForm.defaultDriverId}>
+              <option value="">No default driver</option>
+              {driverRows.filter((d) => d.registered).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select></span><small className="muted">Picked automatically when this car is assigned. You can still choose another driver for any ride.</small></label>
             <label className="field"><span>GPS tracker ID (optional)</span><span className="input"><input name="gpsId" placeholder="Device ID / IMEI from the car's GPS unit" defaultValue={carForm === 'new' ? '' : carForm.gpsId} /></span></label>
             <label className="field"><span>Notes (optional)</span><span className="input"><input name="notes" placeholder="Insurance, permit, service dates..." defaultValue={carForm === 'new' ? '' : carForm.notes} /></span></label>
             <div className="modal-actions"><button type="button" className="btn btn-ghost" onClick={() => setCarForm(null)}>Cancel</button><button type="submit" className="btn btn-primary">{carForm === 'new' ? <><Plus size={16} /> Add car</> : <><Check size={16} /> Save changes</>}</button></div>
@@ -639,6 +651,12 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
             <span className="input textarea"><textarea value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)} rows={3} maxLength={1000} placeholder="Shift preferences, licence expiry, anything the team should know" /></span>
             <div className="modal-actions"><button type="button" className="btn btn-ghost compact" disabled={notesDraft === selectedDriver.notes} onClick={() => saveNotes(selectedDriver)}>Save notes</button></div>
           </div>}
+          {selectedDriver.registered && <form className="stack tight-gap" onSubmit={(e) => { e.preventDefault(); resetDriverPassword(selectedDriver) }}>
+            <span className="eyebrow">Reset password</span>
+            <small className="muted">Sign-in: {selectedDriver.phone}{selectedDriver.password ? <> · current password <span className="pw-chip">{selectedDriver.password}</span></> : ''}</small>
+            <span className="input"><Lock size={16} /><input value={newDriverPw} onChange={(e) => setNewDriverPw(e.target.value)} minLength={4} maxLength={64} placeholder="New password (at least 4 characters)" autoComplete="off" required aria-label={`New password for ${selectedDriver.name}`} /></span>
+            <div className="modal-actions"><button type="submit" className="btn btn-ghost compact" disabled={newDriverPw.trim().length < 4}><KeyRound size={15} /> Set new password</button></div>
+          </form>}
           <div className="danger-zone"><span><strong>Delete this driver</strong><small>Removes their login and rider-app listing. Past rides stay in history.</small></span><button type="button" className="btn btn-danger compact" onClick={() => deleteDriver(selectedDriver)}><Trash2 size={15} /> Delete driver</button></div>
         </section>
       </div>}

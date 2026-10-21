@@ -123,7 +123,7 @@ export function overview() {
   const upcoming = db.rides.filter((r) => r.status === 'approved').sort((a, b) => rideWindow(a, now).start - rideWindow(b, now).start).map(view)
   const trips = db.rides.filter((r) => LIVE.includes(r.status)).map(view)
   const cars = CARS.map((c) => ({
-    name: c.name, plate: c.plate, seats: c.seats, depot: c.depot, model: c.model ?? '', color: c.color ?? '', fuel: c.fuel ?? '', year: c.year ?? null, notes: c.notes ?? '', gpsId: c.gpsId ?? '', gps: gpsOf(c), pickupEtaMin: c.pickupEtaMin,
+    name: c.name, plate: c.plate, seats: c.seats, depot: c.depot, model: c.model ?? '', color: c.color ?? '', fuel: c.fuel ?? '', year: c.year ?? null, notes: c.notes ?? '', gpsId: c.gpsId ?? '', defaultDriverId: c.defaultDriverId ?? '', gps: gpsOf(c), pickupEtaMin: c.pickupEtaMin,
     status: trips.some((t) => t.vehicle === c.name) ? 'busy' : 'idle',
     freeInMin: trips.find((t) => t.vehicle === c.name)?.etaMin ?? 0,
     trip: trips.find((t) => t.vehicle === c.name) ?? null,
