@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
-import { ArrowDownUp, ArrowRight, CalendarClock, CalendarRange, CheckCircle2, MapPin, Navigation, Plus, UsersRound, X, Zap } from 'lucide-react'
+import { ArrowDownUp, ArrowRight, CalendarClock, CalendarRange, CheckCircle2, ExternalLink, MapPin, Navigation, Plus, UsersRound, X, Zap } from 'lucide-react'
 import LocationInput from './LocationInput'
+import { hasPlace, placeUrl, routeUrl } from './gmaps'
 import AllocationTable from './AllocationTable'
 import { searchPlaces, type Coords } from './places'
 import { api, ApiError } from './api'
@@ -24,6 +25,21 @@ const MODES: { id: Mode; label: string; hint: string; icon: typeof Zap }[] = [
 ]
 
 let stopKey = 0
+
+// Lets the rider double-check the places in their own Google Maps app before sending the request.
+function GoogleMapsCheck({ pickup, destination, stops }: { pickup: { label: string; coords?: Coords }; destination: { label: string; coords?: Coords }; stops: { label: string; coords?: Coords }[] }) {
+  const from = hasPlace(pickup), to = hasPlace(destination)
+  if (!from && !to) return null
+  const link = (href: string, text: string) => <a className="gmaps-chip" href={href} target="_blank" rel="noreferrer">{text} <ExternalLink size={12} /></a>
+  return (
+    <div className="gmaps-check">
+      <small>Check in Google Maps</small>
+      {from && link(placeUrl(pickup), 'Pickup')}
+      {to && link(placeUrl(destination), 'Destination')}
+      {from && to && link(routeUrl(pickup, destination, stops), 'Route')}
+    </div>
+  )
+}
 
 export default function BookingForm({ user, here, onLocated, prefill, onSent, onViewRequests, frequent }: {
   user: User; here?: Coords; onLocated: (c: Coords) => void; prefill?: Prefill; frequent: Place[]
@@ -121,6 +137,7 @@ export default function BookingForm({ user, here, onLocated, prefill, onSent, on
         <div className="swap-row"><span className="divider" /><button type="button" className="swap-btn" onClick={swapLocations} aria-label="Swap pickup and destination"><ArrowDownUp size={14} /></button><span className="divider" /></div>
         <LocationInput frequent={frequent} name="destination" caption="TO" placeholder="Where to?" tone="destination" icon={<Navigation size={15} />} value={destination} onChange={(text, c) => { setDestination(text); setDestCoords(c) }} bias={here} />
         {stops.length < MAX_STOPS && <button type="button" className="add-stop" onClick={() => setStops((s) => [...s, { key: ++stopKey, text: '' }])}><Plus size={15} /> Add a stop{stops.length > 0 ? ` (${stops.length}/${MAX_STOPS})` : ''}</button>}
+        <GoogleMapsCheck pickup={{ label: pickup, coords: pickupCoords }} destination={{ label: destination, coords: destCoords }} stops={stops.map((s) => ({ label: s.text, coords: s.coords }))} />
       </div>
 
       <div className="card">

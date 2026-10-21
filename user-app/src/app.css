@@ -150,3 +150,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+/* "Check in Google Maps" links */
+.gmaps-check { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 10px 16px 12px; border-top: 1px solid var(--line); }
+.gmaps-check small { color: var(--muted); font-size: 12px; margin-right: 2px; }
+.gmaps-chip { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 99px; color: var(--brand); font-size: 13px; font-weight: 600; text-decoration: none; background: var(--surface); }
+.gmaps-chip:hover { border-color: var(--brand); background: var(--brand-soft); }
+.gmaps-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.gmaps-actions .btn { flex: 1 1 140px; }

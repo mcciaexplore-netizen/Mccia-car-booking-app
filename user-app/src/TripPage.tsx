@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Check, Hourglass, KeyRound, Phone, X } from 'lucide-react'
+import { ArrowLeft, Check, ExternalLink, Hourglass, KeyRound, Phone, X } from 'lucide-react'
 import type { User } from './auth'
 import MapView from './MapView'
 import { useLiveDriver } from './useLiveDriver'
+import { placeUrl, routeUrl } from './gmaps'
 import { api, ApiError } from './api'
 import AllocationTable, { type Row } from './AllocationTable'
 import { canCancel, routeText, telHref, whenLabel, whenText, type Ride } from './rides'
@@ -126,6 +127,16 @@ export default function TripPage({ rideId, user, onDone }: { rideId: string; use
           <div className="card-head"><h2>{assigned ? 'Your allocation' : 'Request summary'}</h2>{assigned && ride.driverPhone && <a className="call-btn" href={telHref(ride.driverPhone)} aria-label={`Call ${ride.driverName}`}><Phone size={18} /></a>}</div>
           <AllocationTable rows={rows} label={assigned ? 'Your allocation' : 'Request summary'} />
         </div>
+
+        {!closed && <div className="card">
+          <div className="card-head"><h2>Open in Google Maps</h2></div>
+          <div className="gmaps-actions">
+            <a className="btn btn-ghost" href={routeUrl({ label: ride.pickup, coords: ride.pickupCoords }, { label: ride.destination, coords: ride.destinationCoords }, (ride.stops ?? []).map((s) => ({ label: s.label, coords: s.coords })))} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Route</a>
+            <a className="btn btn-ghost" href={placeUrl({ label: ride.pickup, coords: ride.pickupCoords })} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Pickup point</a>
+            {tracking && live && <a className="btn btn-ghost" href={placeUrl({ label: '', coords: { lat: live.lat, lon: live.lon } })} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Driver's location now</a>}
+          </div>
+          {tracking && live && <p className="hint">Google Maps shows where the driver was when you tapped. For live movement, use the map on this screen.</p>}
+        </div>}
 
         {cancelError && <div className="alert error" role="alert">{cancelError}</div>}
         {canCancel(ride) && <button type="button" className="btn btn-danger" onClick={cancel}>Cancel request</button>}
