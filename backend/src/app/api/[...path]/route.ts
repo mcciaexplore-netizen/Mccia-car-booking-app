@@ -11,6 +11,7 @@ import { allocate, availabilityFor, parseRequest } from '@/lib/booking'
 import { addNotification, maskEmail, notifyApproved, notifyCancelled, notifyHeld, runReminders } from '@/lib/notify'
 import { driverReport, registerDriver, removeDriver, setDriverNotes, setDriverPassword } from '@/lib/drivers'
 import { auth, body, fail, json } from '@/lib/http'
+import { resolveMapLink } from '@/lib/maplink'
 
 const publicAccount = ({ salt: _s, hash: _h, ...a }: Account) => a
 // A car's default driver: '' or unknown ids clear it.
@@ -359,6 +360,12 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
       me.salt = newSalt(); me.hash = hashPw(String(x.next), me.salt)
       save.riders()
       return json({ ok: true })
+    }
+    // A Google Maps link pasted into From / To: returns the place's coordinates (and name when the link has one).
+    if (b === 'maplink' && m === 'POST') {
+      const x = await body(req)
+      const found = await resolveMapLink(String(x.url ?? ''))
+      return found.ok ? json(found.value) : fail(found.error, 422)
     }
     if (b === 'account' && m === 'DELETE') {
       db.riders.splice(db.riders.indexOf(me), 1)

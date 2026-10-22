@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Building2, Clock3, Crosshair, LoaderCircle, MapPin, Star, X } from 'lucide-react'
+import { Building2, Clock3, Crosshair, Link2, LoaderCircle, MapPin, Star, X } from 'lucide-react'
 import { MCCIA_OFFICES } from './offices'
 import { samePlace } from './frequent'
+import { api } from './api'
+
+// A Google Maps link anywhere in the text (Google's share text is often "Place name https://maps.app.goo.gl/...").
+const MAPS_LINK = /(?:https?:\/\/)?(?:maps\.app\.goo\.gl|goo\.gl\/maps|(?:www\.)?google\.[a-z.]{2,6}\/maps|maps\.google\.[a-z.]{2,6})\S*/i
+const mapsLinkIn = (text: string) => text.match(MAPS_LINK)?.[0] ?? null
 import { ATTRIBUTION, newSessionToken, resolvePlace, reverseGeocode, searchPlaces, type Coords, type Place } from './places'
 
 const RECENT_KEY = 'rideops.recentPlaces.v2'
@@ -43,10 +48,13 @@ export default function LocationInput({ name, caption, placeholder, value, onCha
   const wrap = useRef<HTMLDivElement>(null)
   const token = useRef(newSessionToken()) // one billing session per search-then-pick
   const [typed, setTyped] = useState(false) // only search text the user typed, not text we filled in
+  const [linkBusy, setLinkBusy] = useState(false)
+  const [linkMsg, setLinkMsg] = useState('')
+  const lastLink = useRef('')
 
   useEffect(() => {
     const query = value.trim()
-    if (!open || !typed || query.length < 2) return
+    if (!open || !typed || query.length < 2 || mapsLinkIn(query)) return
     const controller = new AbortController()
     const timer = setTimeout(async () => {
       setLoading(true)
@@ -60,6 +68,15 @@ export default function LocationInput({ name, caption, placeholder, value, onCha
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
   }, [value, open, bias, typed])
+
+  // A Google Maps link pasted or typed into the box is read automatically.
+  useEffect(() => {
+    const link = typed ? mapsLinkIn(value) : null
+    if (!link || link === lastLink.current) return
+    const timer = setTimeout(() => { void readMapsLink(link) }, 300)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only when the text changes
+  }, [value, typed])
 
   useEffect(() => {
     function outside(e: MouseEvent) { if (!wrap.current?.contains(e.target as Node)) setOpen(false) }
@@ -75,6 +92,42 @@ export default function LocationInput({ name, caption, placeholder, value, onCha
     token.current = newSessionToken()
     onChange(full.detail ? `${full.label}, ${full.detail}` : full.label, full.coords)
     if (!full.id.startsWith('office-') && !full.id.startsWith('frequent-')) saveRecent(full)
+  }
+
+  // Optional: fill this field from a Google Maps share link (Share -> Copy link). Typing and search work as before.
+  async function readMapsLink(link: string) {
+    lastLink.current = link
+    setLinkBusy(true); setLinkMsg(''); setResults([])
+    try {
+      const found = await api<{ coords: Coords | null; name: string | null }>('/rider/maplink', { body: { url: link } })
+      if (found.coords) {
+        const place = await reverseGeocode(found.coords).catch(() => null)
+        const address = place ? (place.detail ? `${place.label}, ${place.detail}` : place.label) : ''
+        const text = found.name ? (address && !address.toLowerCase().startsWith(found.name.toLowerCase()) ? `${found.name}, ${address}` : found.name)
+          : address || `Pinned location (${found.coords.lat.toFixed(5)}, ${found.coords.lon.toFixed(5)})`
+        setTyped(false)
+        onChange(text, found.coords)
+        setOpen(false)
+      } else if (found.name) {
+        // The link only names the place: search for it so the rider can pick the right one.
+        setTyped(true)
+        onChange(found.name)
+        setOpen(true)
+        setLinkMsg('Pick the right place from the list below.')
+      }
+    } catch (err) {
+      setLinkMsg(err instanceof Error ? err.message : 'Could not read this Google Maps link.')
+      setOpen(true)
+    } finally { setLinkBusy(false) }
+  }
+
+  async function pasteMapsLink() {
+    setLinkMsg('')
+    let text = ''
+    try { text = await navigator.clipboard.readText() } catch { /* clipboard blocked: fall through to the hint */ }
+    const link = mapsLinkIn(text)
+    if (link) return readMapsLink(link)
+    setLinkMsg(text ? 'The copied text is not a Google Maps link. In Google Maps, open the place, tap Share, then Copy link.' : 'Copy the place from Google Maps first (open the place, tap Share, then Copy link), or paste the link into the box above.')
   }
 
   function useCurrentLocation() {
@@ -108,14 +161,14 @@ export default function LocationInput({ name, caption, placeholder, value, onCha
   }
 
   const query = value.trim()
-  const showSearch = typed && query.length >= 2
+  const showSearch = typed && query.length >= 2 && !mapsLinkIn(query)
   // Frequent places come first, then recent ones (minus any already listed as frequent). While typing, only matches stay.
   const matches = (p: Place) => !showSearch || `${p.label} ${p.detail}`.toLowerCase().includes(query.toLowerCase())
   const frequentShown = frequent.filter(matches)
   const recent = !showSearch ? loadRecent().filter((p) => !frequent.some((f) => samePlace(f, p))) : []
   // MCCIA offices are always one tap away.
   const offices = MCCIA_OFFICES.filter(matches)
-  const showPanel = open && (allowCurrent || showSearch || frequentShown.length > 0 || recent.length > 0 || offices.length > 0)
+  const showPanel = open // the "Paste a Google Maps link" row is always offered
 
   return (
     <div className={`location-input ${tone}-input`} ref={wrap}>
@@ -140,6 +193,11 @@ export default function LocationInput({ name, caption, placeholder, value, onCha
             </button>
           )}
           {geoError && <p className="loc-msg error">{geoError}</p>}
+          <button type="button" className="loc-row current" onClick={() => void pasteMapsLink()} disabled={linkBusy}>
+            <span className="loc-icon blue">{linkBusy ? <LoaderCircle className="loc-spin" size={15} /> : <Link2 size={15} />}</span>
+            <span className="loc-text"><strong>{linkBusy ? 'Reading Google Maps link…' : 'Paste a Google Maps link'}</strong><small>Optional · in Google Maps tap Share, then Copy link</small></span>
+          </button>
+          {linkMsg && <p className={`loc-msg ${linkMsg.startsWith('Pick') ? '' : 'error'}`}>{linkMsg}</p>}
           {frequentShown.length > 0 && <p className="loc-group">Frequent</p>}
           {frequentShown.map((p) => (
             <button type="button" className="loc-row" key={p.id} onClick={() => choose(p)}>
