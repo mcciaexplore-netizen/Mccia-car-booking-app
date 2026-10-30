@@ -2,8 +2,12 @@ export const API = (import.meta.env.VITE_API_URL as string | undefined)?.replace
 
 const TOKEN_KEY = 'mccia.adminToken'
 export const getToken = () => { try { return localStorage.getItem(TOKEN_KEY) } catch { return null } }
+// The App Hub's address, for the "‹ App Hub" link. Only a sign-in through the hub stores it (api/sso/callback.js, which writes both keys
+// itself); any sign-in or sign-out here clears it, so a password login never shows the link.
+const HUB_URL_KEY = 'mccia.hubUrl'
+export const getHubUrl = () => { try { return localStorage.getItem(HUB_URL_KEY) } catch { return null } }
 export const setToken = (t: string | null) => {
-  try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY) } catch { /* storage unavailable */ }
+  try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(HUB_URL_KEY) } catch { /* storage unavailable */ }
 }
 
 export class ApiError extends Error {

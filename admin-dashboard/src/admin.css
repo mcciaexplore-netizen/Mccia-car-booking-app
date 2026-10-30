@@ -345,3 +345,12 @@ body { background: var(--bg); }
 .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border-radius: 10px; background: #eef2f6; }
 .seg button { padding: 8px 6px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-weight: 600; cursor: pointer; }
 .seg button.on { background: var(--surface); color: var(--brand); box-shadow: 0 1px 4px #0b63ad22; }
+
+/* "‹ App Hub" above the brand (sign-ins through the MCCIA App Hub only), and the page that explains a failed hub sign-in. */
+.side-top { display: flex; flex-direction: column; gap: 6px; }
+.hub-back { display: inline-flex; align-items: center; gap: 2px; align-self: flex-start; color: var(--muted); font-size: 12px; text-decoration: none; transition: color .15s; }
+.hub-back:hover { color: #2a6b7c; }
+.sso-page { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+.sso-card { max-width: 420px; width: 100%; text-align: center; align-items: center; }
+.sso-card p { color: var(--muted); }
+.sso-alt { color: var(--muted); font-size: 13px; }

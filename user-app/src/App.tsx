@@ -9,6 +9,7 @@ import Notifications from './Notifications'
 import { isActive, STATUS_LABEL, type Ride } from './rides'
 import type { Coords } from './places'
 import { api } from './api'
+import HubBackLink from './HubBackLink'
 import type { User } from './auth'
 
 type Tab = 'book' | 'rides' | 'account'
@@ -55,7 +56,7 @@ function App({ user, onUser, onLogout }: { user: User; onUser: (u: User) => void
     <div className="m-shell app-shell">
       {popups}
       <header className="m-header">
-        <div className="m-brand"><img src="/mccia-logo.png" alt="MCCIA" /><span>Cabs</span></div>
+        <div className="m-brand"><HubBackLink /><img src="/mccia-logo.png" alt="MCCIA" /><span>Cabs</span></div>
         <span className="avatar small">{user.name.charAt(0).toUpperCase()}</span>
       </header>
 

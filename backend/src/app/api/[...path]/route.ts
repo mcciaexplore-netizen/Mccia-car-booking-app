@@ -12,6 +12,7 @@ import { addNotification, maskEmail, notifyApproved, notifyCancelled, notifyHeld
 import { driverReport, registerDriver, removeDriver, setDriverNotes, setDriverPassword } from '@/lib/drivers'
 import { auth, body, fail, json } from '@/lib/http'
 import { resolveMapLink } from '@/lib/maplink'
+import { SsoError, verifyHubToken } from '@/lib/sso'
 
 const publicAccount = ({ salt: _s, hash: _h, ...a }: Account) => a
 // A car's default driver: '' or unknown ids clear it.
@@ -66,6 +67,34 @@ async function handle(req: Request, ctx: Ctx): Promise<Response> {
       const acct = (claims.role === 'rider' ? db.riders : db.admins).find((x) => x.id === claims.id)
       return acct ? json({ role: claims.role, user: publicAccount(acct) }) : fail('Please sign in again.', 401)
     }
+    // Sign-in from the App Hub, sent on by the rider app's or the admin dashboard's callback function. Rider app: everyone with access
+    // books as a rider. Admin dashboard: the hub's App Admins and App Staff of it become admins; anyone else is refused. The account
+    // is found by email, or made with a random password nobody knows (they can set one later under their account).
+    if (b === 'sso' && c === 'callback' && m === 'POST') {
+      const x = await body(req)
+      const app = x.app === 'admin' ? 'admin' : x.app === 'rider' ? 'rider' : null
+      if (!app) return fail('Unknown app.')
+      let who
+      try {
+        who = await verifyHubToken(String(x.token ?? ''), app)
+      } catch (e) {
+        const code = e instanceof SsoError ? e.code : 'invalid'
+        if (code === 'config') console.error(`SSO misconfigured: ${(e as Error).message}`)
+        return json({ error: code === 'config' ? 'Single sign-on is not set up on the server.' : 'The sign-in from the App Hub was not valid. Open the app from the App Hub again.', code }, code === 'config' ? 503 : 401)
+      }
+      if (app === 'admin' && who.hubRole !== 'admin' && who.hubRole !== 'staff') return json({ error: 'Only the admins and staff of this app in the App Hub can open the admin dashboard.', code: 'no_access' }, 403)
+      const list = app === 'rider' ? db.riders : db.admins
+      let acct = list.find((u) => u.email === who.email)
+      if (!acct) {
+        const salt = newSalt()
+        acct = { id: randomBytes(8).toString('hex'), name: who.name, email: who.email, phone: '', salt, hash: hashPw(randomBytes(32).toString('hex'), salt), createdAt: new Date().toISOString() }
+        list.push(acct)
+        save[app === 'rider' ? 'riders' : 'admins']()
+      }
+      return json({ token: issueToken(app, acct.id), role: app, user: publicAccount(acct), hub_url: who.hubUrl })
+    }
+    // Admin accounts are no longer made by sign-up: admins come in through the App Hub (existing admins still sign in with their password).
+    if (b === 'admin' && c === 'signup' && m === 'POST') return fail('Admin sign-up is closed. Open the admin dashboard from the MCCIA App Hub.', 403)
     if ((b === 'rider' || b === 'admin') && m === 'POST' && (c === 'signup' || c === 'signin')) {
       const list = b === 'rider' ? db.riders : db.admins
       const x = await body(req)
@@ -432,6 +461,8 @@ const cors = (res: Response, req?: Request) => {
 const attempts = new Map<string, { n: number; reset: number }>()
 function tooManyAttempts(req: Request, path: string[]) {
   if (path[0] !== 'auth' || req.method !== 'POST') return false
+  // Hub sign-ins all arrive from the apps' callback functions (a few shared addresses) and carry a signed token, so they are not counted.
+  if (path[1] === 'sso') return false
   const ip = (req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip') ?? 'local').split(',')[0].trim()
   const key = `${ip}|${path.join('/')}`
   const now = Date.now()

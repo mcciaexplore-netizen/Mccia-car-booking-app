@@ -9,6 +9,7 @@ import { routeText, whenLabel, type QueueRide } from './requestUtils'
 import MaintenancePage from './MaintenancePage'
 import InvoicesPage from './InvoicesPage'
 import { api, ApiError, getToken, setToken } from './api'
+import HubBackLink from './HubBackLink'
 
 type Coords = { lat: number; lon: number }
 type Ride = {
@@ -80,9 +81,8 @@ const DRIVER_STATUS: Record<DriverRow['status'], { label: string; tone: string }
 const phaseLabel = (ride: Ride) => (ride.phase === 'to-pickup' ? 'Heading to pickup' : ride.phase === 'reached' ? 'Reached destination' : 'Trip in progress')
 const short = (r: Ride) => r.stops.length ? `+${r.stops.length} stop${r.stops.length > 1 ? 's' : ''}` : ''
 
+// Password sign-in for existing admin accounts. New admins come in through the MCCIA App Hub (there is no sign-up here any more).
 function AuthScreen({ onAuthed }: { onAuthed: (admin: Admin) => void }) {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
-  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [visible, setVisible] = useState(false)
@@ -93,8 +93,7 @@ function AuthScreen({ onAuthed }: { onAuthed: (admin: Admin) => void }) {
     event.preventDefault()
     setError(''); setBusy(true)
     try {
-      const body = mode === 'signup' ? { name, email, password } : { email, password }
-      const res = await api<{ token: string; user: Admin }>(`/auth/admin/${mode}`, { body })
+      const res = await api<{ token: string; user: Admin }>('/auth/admin/signin', { body: { email, password } })
       setToken(res.token)
       onAuthed(res.user)
     } catch (err) {
@@ -115,16 +114,11 @@ function AuthScreen({ onAuthed }: { onAuthed: (admin: Admin) => void }) {
       </aside>
       <section className="auth-panel">
         <form className="auth-card" onSubmit={submit}>
-          <div className="auth-tabs" role="tablist">
-            <button type="button" role="tab" aria-selected={mode === 'signin'} className={mode === 'signin' ? 'active' : ''} onClick={() => { setMode('signin'); setError('') }}>Sign in</button>
-            <button type="button" role="tab" aria-selected={mode === 'signup'} className={mode === 'signup' ? 'active' : ''} onClick={() => { setMode('signup'); setError('') }}>Sign up</button>
-          </div>
-          <div className="m-title"><h1>{mode === 'signin' ? 'Welcome back' : 'Create an admin account'}</h1><p>{mode === 'signin' ? 'Sign in to manage the fleet.' : 'Set up your admin account to manage the fleet.'}</p></div>
+          <div className="m-title"><h1>Welcome back</h1><p>Sign in to manage the fleet. New admins: open the admin dashboard from the MCCIA App Hub.</p></div>
           {error && <div className="alert error" role="alert"><AlertCircle size={16} /> {error}</div>}
-          {mode === 'signup' && <label className="field"><span>Full name</span><span className="input"><UserRound size={16} /><input value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" required /></span></label>}
           <label className="field"><span>Work email</span><span className="input"><Mail size={16} /><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" autoComplete="email" placeholder="you@mcciapune.com" required /></span></label>
-          <label className="field"><span>Password</span><span className="input"><Lock size={16} /><input value={password} onChange={(e) => setPassword(e.target.value)} type={visible ? 'text' : 'password'} autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} minLength={mode === 'signup' ? 6 : undefined} required /><button type="button" className="link-btn" onClick={() => setVisible((v) => !v)} aria-label={visible ? 'Hide password' : 'Show password'}>{visible ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>
-          <button className="btn btn-primary btn-block" type="submit" disabled={busy}>{busy ? 'Please wait…' : mode === 'signin' ? 'Sign in' : 'Create account'} <ArrowRight size={17} /></button>
+          <label className="field"><span>Password</span><span className="input"><Lock size={16} /><input value={password} onChange={(e) => setPassword(e.target.value)} type={visible ? 'text' : 'password'} autoComplete="current-password" required /><button type="button" className="link-btn" onClick={() => setVisible((v) => !v)} aria-label={visible ? 'Hide password' : 'Show password'}>{visible ? <EyeOff size={16} /> : <Eye size={16} />}</button></span></label>
+          <button className="btn btn-primary btn-block" type="submit" disabled={busy}>{busy ? 'Please wait…' : 'Sign in'} <ArrowRight size={17} /></button>
         </form>
       </section>
     </main>
@@ -358,7 +352,7 @@ function Dashboard({ admin, onLogout }: { admin: Admin; onLogout: () => void }) 
   return (
     <div className="admin-shell">
       <aside className={`sidebar ${navOpen ? 'open' : ''}`}>
-        <div className="side-brand"><img src="/mccia-logo.png" alt="MCCIA" /><span>Cabs · Admin</span></div>
+        <div className="side-top"><HubBackLink /><div className="side-brand"><img src="/mccia-logo.png" alt="MCCIA" /><span>Cabs · Admin</span></div></div>
         <nav className="side-nav" aria-label="Main">
           <span className="eyebrow">Operations</span>
           {nav.map(({ id, label, icon: Icon, count }) => <button key={id} type="button" className={`nav-item ${view === id ? 'active' : ''}`} onClick={() => go(id)}><Icon size={18} />{label}{!!count && <span className="nav-count">{count}</span>}</button>)}
